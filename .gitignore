@@ -1,0 +1,30 @@
+# ── 运行时数据：绝不入库（里面有真实数据）──
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.bak
+
+# ── 依赖与构建产物 ──
+node_modules/
+dist/
+build/
+
+# ── 便携 Node 运行时（体积大，不进仓库；需要离线包的人自己放）──
+node/
+
+# ── 日志 / 临时文件 ──
+*.log
+out.txt
+shot.png
+_shots/
+_shots2/
+
+# ── 编辑器 / 系统 ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+__pycache__/
+*.pyc

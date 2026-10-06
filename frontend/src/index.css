@@ -1,0 +1,727 @@
+/* Excel 风格：浅灰白底、细边框、素色、不花哨 */
+
+:root {
+  --lpm-border: #d9d9d9;
+  --lpm-border-soft: #ebebeb;
+  --lpm-head: #f5f5f5;
+  --lpm-head-line: #c8c8c8;
+  --lpm-accent: #217346; /* Excel 绿，只用于极少量强调 */
+  --lpm-select: #e8f2ec;
+}
+
+.lpm-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 🔴 2026-10-05 修正（V11）——「任务一多整个页面被撑长」的一组修复
+   现象（用户实测 + 我方量测）：
+     任务加到 13/25 条时，页面文档高度从 690 涨到 1132，滚动发生在**整个页面**上，
+     于是：① 表头（列名）被滚出屏幕（theadTop = -328）；② 底部工作表栏跟着上下跑。
+   处置：锁死文档级滚动，把滚动留在内容区/表格内部；表头 sticky 钉在表格顶部。 */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+/* ⚠️ 必须用 100vh（不要改成 100%）：
+   .lpm-root 的父级 #root 没有确定高度时，height:100% 会失效 → 整个布局塌成内容高度，
+   用户实测到的"底部工作表栏跑到中间、内容只占屏幕一小块"就是这么来的。 */
+.lpm-root { height: 100vh; }
+.lpm-content { overscroll-behavior: contain; }
+
+/* 表头固定在表格顶部（不再随内容滚走）
+   ⚠️ 必须 !important：StyleProvider 用了 hashPriority="high"，antd 自身样式的优先级很高，
+      不加会被 antd 的 `.ant-table-thead > tr > th` 压过去（实测表头照样滚走 -203px）。
+   背景色也要显式给，否则下面的行会从表头后面透出来。 */
+.lpm-draggable .ant-table-thead > tr > th,
+.lpm-split-left .ant-table-thead > tr > th {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 6 !important;
+  background: var(--lpm-head) !important;
+}
+
+/* 🔴 2026-10-05 修正（V11）：甘特图补横向行分隔线
+   原来只有竖向时间刻度线，行与行之间没有任何横线，看不出每行到哪儿结束。 */
+.wx-gantt .wx-row,
+.wx-gantt .wx-table-row,
+.wx-gantt .wx-table-body-row,
+.wx-gantt .wx-grid-row {
+  border-bottom: 1px solid #ececec !important;
+}
+
+/* 🔴 2026-10-05 V20【列表与甘特图逐行对齐】
+   用户原话：「你的甘特图和前面那个列表它不对齐啊……我之前是对齐的哟」
+   实测（Edge 84，同一屏）：
+     左列表   表头 38px、首行 top=114、行高 44px
+     右甘特   scale 49px（两行刻度 24+24+1）、首行 top=133、行高 22px(=cellHeight)
+   ⇒ 起始差 19px、行高差一倍 ⇒ 每行往下累积错 22px，第 4 行差 64px。
+   对齐条件（两条缺一不可）：
+     ① 两侧首行同 y ：列表容器补 8px 上边距 + 表头 49px
+                       （= 甘特外层 padding 8px + scale 49px）
+     ② 两侧行距相同 ：列表行高 == 甘特 cellHeight（见 ProjectPlan.tsx）
+   🔴 V21 起统一取 30px（用户：「你这明显应该把文字那边变小啊…两边都稍微小一点」）：
+      列表里最高的控件是操作列按钮 24px → 30px 行高留上下各 3px，安全不裁切；
+      甘特侧 cellHeight 同步 30，横条居中偏移 margin-top:6px（见 ProjectPlan.tsx）。
+   ⚠️ 改任何一侧的表头/行高都必须同步改另一侧，否则立刻错位。 */
+.lpm-split-left .lpm-scroll-x { padding-top: 8px !important; }
+.lpm-split-left .ant-table-thead > tr > th { height: 49px !important; }
+.lpm-draggable .ant-table-tbody > tr > td {
+  height: 30px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  vertical-align: middle !important;
+}
+
+/* ── 顶部工具栏 ── */
+.lpm-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  height: 38px;
+  flex: 0 0 38px;
+  background: var(--lpm-head);
+  border-bottom: 1px solid var(--lpm-head-line);
+}
+
+.lpm-toolbar .lpm-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #222;
+}
+
+.lpm-toolbar .lpm-spacer { flex: 1; }
+
+.lpm-save-state {
+  font-size: 12px;
+  color: #6a6a6a;
+  min-width: 92px;
+  text-align: right;
+}
+.lpm-save-state.saving { color: #b07d00; }
+.lpm-save-state.error { color: #c00; }
+
+/* ── 内容区 ── */
+.lpm-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: #fff;
+}
+
+/* ── 底部永久工作表栏 ── */
+.lpm-sheetbar {
+  flex: 0 0 34px;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: var(--lpm-head);
+  border-top: 1px solid var(--lpm-head-line);
+  overflow-x: auto;
+  overflow-y: hidden;
+  user-select: none;
+}
+
+.lpm-sheet {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-right: 1px solid var(--lpm-border);
+  font-size: 12.5px;
+  color: #444;
+  cursor: pointer;
+  white-space: nowrap;
+  background: #ededed;
+}
+.lpm-sheet:hover { background: #e3e3e3; }
+.lpm-sheet.active {
+  background: #fff;
+  color: #111;
+  font-weight: 600;
+  border-top: 2px solid var(--lpm-accent);
+}
+.lpm-sheet .lpm-sheet-close {
+  font-size: 11px;
+  color: #999;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.lpm-sheet .lpm-sheet-close:hover { background: #d0d0d0; color: #333; }
+
+/* 🔴 2026-10-06 标签内侧内容层。
+   外层 .lpm-sheet 现在由拖动包裹件（SortableItem）承担，是 .lpm-sheetbar 的 flex 子项；
+   真正的点击/右键命中区是这一层（Dropdown 只能把事件挂到原生 DOM 子元素上），
+   它只做内部排布，不改变 .lpm-sheetbar 贴在窗口下边缘的既有规则。 */
+.lpm-sheet-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  cursor: pointer;
+}
+
+.lpm-sheet-add {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  font-size: 15px;
+  color: #666;
+  cursor: pointer;
+  background: #ededed;
+  border-right: 1px solid var(--lpm-border);
+}
+.lpm-sheet-add:hover { background: #e3e3e3; color: #000; }
+
+/* ── 日志周日历 ── */
+.lpm-cal-wrap { display: flex; height: 100%; min-height: 0; }
+.lpm-cal-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.lpm-cal-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-bottom: 1px solid var(--lpm-border-soft);
+  background: #fafafa;
+}
+/* 🔴 2026-10-06 每周高度可手动拖（需求二）
+   原来 .lpm-week-day 写死 min-height:150px、.lpm-day-textarea 又写死 min-height:120px
+   → 既拉不动也缩不小。现在高度由 CSS 变量 --lpm-week-h 驱动：
+     · 默认 150px（与 LogCalendar.tsx 的 DEFAULT_WEEK_H 一致）；
+     · 每一行由 JS 内联覆盖该变量 → 只影响那一周；
+     · textarea 的 min-height 跟着变量走（-30px 给日期头留位置），缩到 90px 仍有 ~60px 可写。
+   拖动条 .lpm-week-resize 见下方。 */
+.lpm-week-row { display: grid; grid-template-columns: repeat(7, 1fr); --lpm-week-h: 150px; }
+.lpm-week-day {
+  border-right: 1px solid var(--lpm-border-soft);
+  border-bottom: 1px solid var(--lpm-border-soft);
+  display: flex; flex-direction: column;
+  min-height: var(--lpm-week-h, 150px);
+  background: #fff;
+}
+.lpm-week-day:last-child { border-right: none; }
+.lpm-week-day.other-month { background: #fbfbfb; color: #aaa; }
+.lpm-week-day.today { background: #f2f8f4; }
+.lpm-day-head {
+  padding: 3px 6px;
+  font-size: 11.5px;
+  color: #666;
+  border-bottom: 1px solid var(--lpm-border-soft);
+  display: flex; justify-content: space-between; align-items: center;
+  background: #fafafa;
+}
+.lpm-week-day.today .lpm-day-head { color: var(--lpm-accent); font-weight: 700; }
+.lpm-day-body { flex: 1; min-height: 0; }
+.lpm-day-textarea {
+  width: 100%; height: 100%;
+  min-height: calc(var(--lpm-week-h, 150px) - 30px);
+  border: none; outline: none; resize: none;
+  padding: 5px 6px; font-size: 12.5px; line-height: 1.5;
+  font-family: inherit; background: transparent; color: #222;
+}
+.lpm-day-textarea:focus { background: #fffdf3; }
+
+/* 每周底部的拖拽条：按住上下拖 = 调这一周高度；双击 = 恢复默认。
+   grid-column: 1 / -1 让它横跨 7 天列、不改变原有 7 列布局。 */
+.lpm-week-resize {
+  grid-column: 1 / -1;
+  height: 6px;
+  cursor: ns-resize;
+  background: #f0f0f0;
+  border-bottom: 1px solid var(--lpm-border-soft);
+}
+.lpm-week-resize:hover { background: var(--lpm-select); }
+.lpm-week-row.dragging .lpm-week-resize { background: var(--lpm-accent); }
+
+/* ── 2026-10-06 修「拖动归属看不出来」──
+   拖拽区扩到「这一周的日期栏」本身（光标变上下箭头、悬停变色），
+   拖动时这一周整块高亮 + 浮出「9/14–9/20 · 这一周 240px」。
+   ⚠️ 只改 paint 类属性（background），不动 width/height/margin，见兼容技能 §6。 */
+.lpm-week-day .lpm-day-head { cursor: ns-resize; }
+.lpm-week-day .lpm-day-head:hover { background: var(--lpm-select); }
+.lpm-week-row.dragging .lpm-week-day { background: #f2f8ff; }
+.lpm-week-row.dragging .lpm-day-head { background: var(--lpm-select); }
+.lpm-week-pill {
+  display: none;
+  position: fixed;
+  z-index: 3000;
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.78);
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ── 待办栏 ── */
+.lpm-todo-panel {
+  flex: 0 0 300px;
+  border-left: 1px solid var(--lpm-border);
+  display: flex; flex-direction: column;
+  background: #fcfcfc; min-height: 0;
+}
+.lpm-todo-panel.collapsed { flex: 0 0 34px; }
+.lpm-todo-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-bottom: 1px solid var(--lpm-border-soft);
+  background: #f7f7f7; font-size: 12.5px; font-weight: 600;
+}
+.lpm-todo-body { flex: 1; min-height: 0; overflow: auto; }
+.lpm-todo-sec-title {
+  padding: 4px 8px; font-size: 11.5px; color: #777;
+  background: #f4f4f4; border-bottom: 1px solid var(--lpm-border-soft);
+  position: sticky; top: 0; z-index: 1;
+}
+.lpm-todo-item {
+  display: flex; gap: 6px; padding: 6px 8px;
+  border-bottom: 1px solid var(--lpm-border-soft);
+  font-size: 12.5px; align-items: flex-start;
+}
+.lpm-todo-item.done .lpm-todo-title { color: #999; text-decoration: line-through; }
+.lpm-todo-title { flex: 1; word-break: break-all; line-height: 1.45; }
+.lpm-todo-meta { font-size: 11px; color: #888; margin-top: 2px; }
+
+/* ── 项目计划 ── */
+.lpm-split { display: flex; height: 100%; min-height: 0; }
+/* 🔴 2026-10-05 修正（V11b）：左栏（任务列表）必须约束在可用高度内自己滚动，
+   否则内容无限撑高：既不出滚动条，锁死页面滚动后溢出部分还会被裁掉、够不着。
+   表头 sticky 也只有在"容器真的会滚"时才有意义。 */
+.lpm-split-left {
+  overflow: auto;
+  min-width: 260px;
+  height: 100%;
+  max-height: 100%;
+}
+.lpm-split-right { flex: 1 1 auto; min-width: 200px; overflow: auto; height: 100%; }
+
+/* 🔴 2026-10-06 用户要求：「计划列表下面的那条左右横线要在页面最下方，不管任务多少」。
+   原来那条横向滚动条紧贴着最后一个任务（看着别扭）。
+   根因：antd 设了 scroll.x 时，横向滚动并不在自己那层，而在**内层** .ant-table-content 上，
+   而这个盒子高度 = 内容高度 → 横线就跟着最后一行走（实测离面板底还差 662px）。
+   修法：让表格各级容器撑满左区剩余高度，把 .ant-table-content 变成「满高的滚动盒」——
+   ① 各级 flex 撑高；② overflow 两轴都给 auto
+   ⚠️ 必须 !important：antd 给的是 `overflow: auto hidden`，只留 x 会把竖排溢出的行裁掉、够不着；
+   ③ 于是横线自动落到面板最下方，任务多了就在这个框里竖滚。
+   表头 sticky 不受影响：sticky 认「最近的滚动祖先」，换成这个盒子照样贴顶。 */
+.lpm-split-left .ant-table-wrapper,
+.lpm-split-left .ant-spin-nested-loading,
+.lpm-split-left .ant-spin-container,
+.lpm-split-left .ant-table,
+.lpm-split-left .ant-table-container {
+  height: 100% !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.lpm-split-left .ant-table-content {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow: auto !important;
+}
+.lpm-split-bar {
+  flex: 0 0 6px; cursor: col-resize; background: #eee;
+  border-left: 1px solid var(--lpm-border); border-right: 1px solid var(--lpm-border);
+}
+.lpm-split-bar:hover { background: #dcdcdc; }
+
+/* ── 表头列宽拖动把手（2026-10-03 新增：列宽可手动拖，不随容器自动变） ── */
+.lpm-col-resizer {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 8px;
+  cursor: col-resize; z-index: 3; user-select: none;
+}
+.lpm-col-resizer:hover { background: rgba(31, 111, 178, 0.22); }
+
+/* ── 开始页（工程 / 文件管理，2026-10-03 新增）──────────────── */
+.lpm-home { min-height: 100%; background: #f5f6f7; padding: 32px 16px 60px; overflow: auto; box-sizing: border-box; }
+.lpm-home-inner { max-width: 720px; margin: 0 auto; }
+.lpm-home-title { font-size: 20px; font-weight: 700; color: #1f2d3d; display: flex; align-items: center; margin-bottom: 18px; }
+.lpm-home-sub { font-size: 12.5px; font-weight: 400; color: #999; margin-left: 10px; }
+.lpm-home-card { background: #fff; border: 1px solid #e6e8eb; border-radius: 6px; padding: 16px 18px; margin-bottom: 16px; }
+.lpm-home-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.lpm-home-card-title { font-size: 13px; font-weight: 600; color: #666; letter-spacing: .5px; }
+.lpm-home-name { font-size: 17px; font-weight: 700; color: #217346; margin-bottom: 10px; }
+.lpm-home-kv { display: flex; font-size: 12.5px; line-height: 2; color: #333; }
+.lpm-home-kv > span:first-child { flex: 0 0 84px; color: #8c8c8c; }
+.lpm-home-kv b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lpm-ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lpm-home-tip { font-size: 12px; color: #9aa0a6; line-height: 1.8; }
+.lpm-home-path { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #eee; font-size: 12.5px; }
+.lpm-home-path b { flex: 1; font-weight: 500; color: #444; }
+.lpm-home-browse { max-height: 320px; overflow: auto; }
+.lpm-home-row { padding: 6px 4px; font-size: 13px; cursor: pointer; display: flex; align-items: center; border-radius: 3px; }
+.lpm-home-row:hover { background: #f0f7f2; }
+.lpm-home-row-db { color: #1f2d3d; }
+.lpm-home-meta { font-size: 11.5px; color: #a0a0a0; }
+
+/* ── 通用表格 ── */
+.lpm-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.lpm-table th, .lpm-table td {
+  border: 1px solid var(--lpm-border-soft);
+  padding: 4px 6px; text-align: left; vertical-align: middle;
+}
+.lpm-table th { background: var(--lpm-head); font-weight: 600; color: #444; white-space: nowrap; }
+.lpm-table tr:hover td { background: #fafafa; }
+
+.lpm-empty {
+  padding: 40px; text-align: center; color: #999; font-size: 13px;
+}
+
+.lpm-pad { padding: 10px; }
+
+/* ── 滚动条：显式可见（Windows 默认可见；Linux/headless 是 overlay 滚动条看不见，
+       所以这里强制给宽度和颜色，保证"能看到能拖"的东西）── */
+.lpm-content::-webkit-scrollbar,
+.lpm-todo-body::-webkit-scrollbar,
+.lpm-cal-scroll::-webkit-scrollbar,
+.lpm-scroll-x::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.lpm-content::-webkit-scrollbar-track,
+.lpm-todo-body::-webkit-scrollbar-track,
+.lpm-cal-scroll::-webkit-scrollbar-track,
+.lpm-scroll-x::-webkit-scrollbar-track {
+  background: #f2f2f2;
+  border-radius: 6px;
+}
+.lpm-content::-webkit-scrollbar-thumb,
+.lpm-todo-body::-webkit-scrollbar-thumb,
+.lpm-cal-scroll::-webkit-scrollbar-thumb,
+.lpm-scroll-x::-webkit-scrollbar-thumb {
+  background: #bfbfbf;
+  border-radius: 6px;
+  border: 2px solid #f2f2f2;
+}
+.lpm-content::-webkit-scrollbar-thumb:hover,
+.lpm-todo-body::-webkit-scrollbar-thumb:hover,
+.lpm-cal-scroll::-webkit-scrollbar-thumb:hover,
+.lpm-scroll-x::-webkit-scrollbar-thumb:hover {
+  background: #a0a0a0;
+}
+/* Firefox 备用 */
+.lpm-scroll-x,
+.lpm-cal-scroll,
+.lpm-todo-body {
+  scrollbar-width: auto;
+}
+
+/* ── 日历：多周连续滚轮滚动容器 ── */
+.lpm-cal-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: 100%;
+}
+
+/* ── 可拖动排序 ── */
+.lpm-drag-hint { color: #b8b8b8; user-select: none; }
+.lpm-draggable tbody tr { user-select: none; cursor: grab; }
+.lpm-draggable tbody tr:hover { background: #fafcfa; }
+.lpm-sortable-item { cursor: grab; }
+.lpm-sortable-item:active { cursor: grabbing; }
+
+
+/* ══════════════════════════════════════════════════════════════════
+   2026-10-03 用户排版意见集中修复
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ① 任务表网格线（原来 border-collapse:separate 且无边框 → 一条线都没有，很散） */
+.lpm-draggable .ant-table-thead > tr > th,
+.lpm-draggable .ant-table-tbody > tr > td {
+  border-right: 1px solid var(--lpm-border-soft) !important;
+  border-bottom: 1px solid var(--lpm-border-soft) !important;
+}
+.lpm-draggable .ant-table-thead > tr > th {
+  border-bottom: 1px solid var(--lpm-border) !important;
+  background: var(--lpm-head) !important;
+  /* 供「列宽拖动把手」绝对定位；fixed 列由 AntD 内联 sticky 覆盖，不受影响 */
+  position: relative;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 🔴 2026-10-05 修复「点『＋』没反应 / 弹窗跑到屏幕外」（用户那台 Edge 84 / Chromium 84）
+   根因：antd 5 给弹窗遮罩层（.ant-modal-wrap）用 `inset: 0` 定位，而 CSS 的 `inset`
+   简写需要 Chromium 87+；Edge 84 不认这条 → 遮罩层没有 top/left/right/bottom，
+   fixed 元素退回「静态位置」（被顶到文档流末尾，即视口下方）→ 弹窗看不见，
+   用户以为「点了没反应 / 增加页面没有用」。
+   处置：用 top/left/right/bottom 显式补一份，不依赖 inset 简写。
+   🔴 2026-10-05 二次修复（V14）：上面只补了 top/left/right/bottom，但实测 .ant-modal-root
+   和 .ant-modal-wrap 的 `position` 也算成了 static（antd 把 position:fixed 和 inset:0 写在
+   同一条规则里，Edge 84 解析 inset 失败后整条规则的定位没生效）→ 弹窗根节点掉到文档流末尾
+   （实测 y=1053，视口才 820）→ 「删除/导出确认框永远在屏幕外，用户以为点击没反应」。
+   所以这里必须把 position:fixed 也显式补上，并补上漏掉的 .ant-modal-root。 */
+/* 🔴 2026-10-05 V19【关键修复】残留的空 .ant-modal-root 挡住整页点击
+   老 Chromium 上 antd 关弹窗后不删 .ant-modal-root 这个空壳；而下面这条规则早先
+   给它加了 position:fixed + 四边 0 → 空壳变成「覆盖全屏的透明挡板」：
+   页面看着完全正常，但点什么都被它吃掉，只能刷新。
+   实测证据（Edge 84）：关弹窗后 wrap=0 mask=0，但 .ant-modal-root 数=1，
+   且 document.elementFromPoint(中心) 返回 DIV.ant-modal-root。
+   处置：.ant-modal-root 不再 fixed、且 pointer-events:none；真正显示弹窗的
+   wrap/mask 仍然 fixed 全屏并单独打开 pointer-events。 */
+.ant-modal-root {
+  position: static !important;
+  pointer-events: none;
+}
+.ant-modal-wrap,
+.ant-modal-mask,
+.lpm-drawer-mask,
+.ant-drawer,
+.ant-drawer-mask,
+.ant-image-preview-wrap,
+
+/* 🔴 2026-10-06 老 Edge 84：antd5 的抽屉用 inset / 逻辑属性定位 ⇒ 抽屉跑到屏幕左边、
+   宽度也被压扁。这里显式把面板钉在右边，并保持它自己的宽度（不参与上面的全屏组）。 */
+.ant-drawer {
+  position: fixed !important;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 1000;
+}
+.ant-drawer-mask {
+  position: fixed !important;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: auto;
+}
+.ant-drawer-content-wrapper {
+  position: fixed !important;
+  top: 0; bottom: 0;
+  right: 0 !important;
+  left: auto !important;
+  pointer-events: none;
+}
+.ant-drawer-content { height: 100%; pointer-events: auto; }
+.ant-drawer-right > .ant-drawer-content-wrapper { right: 0 !important; left: auto !important; }
+
+/* 🔴 2026-10-06 关键：老 Edge 84 上 rc-drawer 的进出场动画（transform 过渡）不触发，
+   面板会永远停在"屏幕外"（translateX(100%)）⇒ 点了「→计划」什么都没发生。
+   这里直接把最终位置写死，不依赖动画；关闭靠 React 卸载节点（和自建确认框同一思路）。 */
+.ant-drawer-content-wrapper { transform: none !important; }
+.ant-drawer-content { width: 100%; }
+.ant-drawer .ant-drawer-content { box-shadow: -2px 0 8px rgba(0, 0, 0, 0.12); }
+
+/* 🔴 2026-10-06 同上：antd5 数字输入框的上下三角用逻辑属性定位 ⇒ 在 Edge 84 上跑到左边
+   挡住数字。显式挪到右侧，并给数字留出右边距。 */
+.ant-input-number { direction: ltr; }
+.ant-input-number-handler-wrap { right: 0 !important; left: auto !important; opacity: 1; }
+.ant-input-number-input { padding-right: 26px !important; }
+.ant-image-preview-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: auto;
+}
+
+/* 🔴 2026-10-05 修复「表头显示成两行」（用户那台 Edge 84 / Chromium 84）
+   根因：antd 5 用 `:where()` 包裹的规则来隐藏「测量行」(.ant-table-measure-row)，
+   而 `:where()` 需要 Chrome 88+；Edge 84 不支持 → 整条隐藏规则失效 →
+   测量行（内含表头文字副本）露出来，看起来就是表格顶部多了一行表头。
+   这里用不依赖 :where() 的选择器强制隐藏，老浏览器同样生效。 */
+.lpm-draggable .ant-table-measure-row,
+.lpm-draggable .ant-table-measure-row > td,
+.lpm-draggable .ant-table-measure-cell-content {
+  display: none !important;
+  height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+}
+.lpm-draggable .ant-table-thead > tr > th:last-child,
+.lpm-draggable .ant-table-tbody > tr > td:last-child {
+  border-right: none !important;
+}
+.lpm-draggable .ant-table-cell-fix-left-last::after,
+.lpm-draggable .ant-table-cell-fix-right-first::after { box-shadow: none !important; }
+.lpm-draggable .ant-table-cell-fix-left-last { border-right: 1px solid var(--lpm-border) !important; }
+.lpm-draggable .ant-table-cell-fix-right-first { border-left: 1px solid var(--lpm-border) !important; }
+
+/* ② 新增/编辑成功后那一行闪一下（用户反馈"点了没反应"） */
+@keyframes lpm-flash {
+  0%   { background: #d9f2e3; }
+  60%  { background: #eafaf0; }
+  100% { background: transparent; }
+}
+.lpm-draggable .ant-table-tbody > tr.lpm-row-flash > td {
+  animation: lpm-flash 2.4s ease-out 1;
+}
+
+/* ③ 进度滑块：自适应列宽 + 细条样式（原来固定 90px，离百分比很远）
+   🔴 2026-10-06 用户反馈「不容易点击到 / 太窄了」：原来整个 input 只有 6px 高，
+   真正的可点区域就是那条 6px 细线 ⇒ 很难点中。
+   改法：把 input 本体的高度放大到 24px（可点区域变大），轨道和圆点用伪元素单独画，
+   视觉上还是细条 + 圆点，但整块高度都好点。行高 30px 不变 ⇒ 甘特对齐不受影响。 */
+.lpm-progress-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+/* 真正的轨道：中间 6px 细条（下边留 1px 给它自己的位置，不影响行高） */
+.lpm-progress-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #e6e6e6;
+}
+.lpm-progress-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--lpm-accent);
+  border: 2px solid #fff;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  margin-top: -5px;          /* (16-6)/2 ⇒ 圆点在 6px 轨道上垂直居中 */
+}
+.lpm-progress-range:active::-webkit-slider-thumb { cursor: grabbing; }
+.lpm-progress-range::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #e6e6e6;
+}
+.lpm-progress-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--lpm-accent);
+  border: 2px solid #fff;
+  cursor: grab;
+}
+
+/* ④ 拖动把手列：窄一点，别抢任务名的空间 */
+.lpm-draggable .ant-table-tbody > tr > td:first-child {
+  padding-left: 2px !important;
+  padding-right: 2px !important;
+}
+
+/* ⑤ 「＋」新建工作表：原来太不起眼，加大 + 悬停反馈 */
+.lpm-sheet-add {
+  min-width: 44px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #666;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.lpm-sheet-add:hover { background: var(--lpm-select); color: var(--lpm-accent); }
+
+/* ⑥ 人员统计卡片：任何窗口宽度都不竖排（原来 Col span=6 挤成折行） */
+.lpm-stat-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.lpm-stat-card {
+  flex: 1 1 148px;
+  min-width: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--lpm-border-soft);
+  border-radius: 3px;
+  background: #fafafa;
+}
+.lpm-stat-card .k { color: #666; font-size: 12.5px; white-space: nowrap; }
+.lpm-stat-card .v { color: #222; font-size: 15px; font-weight: 600; white-space: nowrap; }
+.lpm-stat-card .u { color: #999; font-size: 11.5px; margin-left: 2px; font-weight: 400; }
+
+/* ══════════════════════════════════════════════════════════════════
+   回收站（2026-10-05）—— 只用 `.lpm-recycle-*` 作用域，仅 paint 类属性
+   （color/background/border），不碰任何全局对齐规则、不给 SVAR 元素定位。
+   ══════════════════════════════════════════════════════════════════ */
+.lpm-recycle-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid #e6e8eb;
+  margin-bottom: 10px;
+  padding-bottom: 0;
+}
+.lpm-recycle-tab {
+  padding: 5px 12px;
+  font-size: 13px;
+  color: #555;
+  background: #f4f5f6;
+  border: 1px solid #e0e2e5;
+  border-bottom: none;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.lpm-recycle-tab:hover { color: var(--lpm-accent); }
+.lpm-recycle-tab.active {
+  color: var(--lpm-accent);
+  font-weight: 600;
+  background: #fff;
+  border-color: #c9d6ce;
+}
+.lpm-recycle-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+  flex-wrap: wrap;
+}
+.lpm-recycle-hint { font-size: 12px; color: #999; }
+
+/* ══════════════════════════════════════════════════════════════════
+   保存状态 + 「立即保存」（方案 C3，2026-10-06）
+   —— 只用 `.lpm-save-*` 作用域，仅 paint/尺寸属性，不碰任何既有对齐规则；
+      不使用 inset / :where() / :is()（老 Edge 84 不支持）。
+   ══════════════════════════════════════════════════════════════════ */
+.lpm-save-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lpm-save-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9a9a9a;
+  flex: 0 0 8px;
+}
+.lpm-save-text {
+  font-size: 12px;
+  color: #6a6a6a;
+  white-space: nowrap;
+}
+.lpm-save-btn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 2px;
+  border: 1px solid #217346;
+  background: #fff;
+  color: #217346;
+  cursor: pointer;
+}
+.lpm-save-btn:hover { background: #eef6f0; }
+.lpm-save-btn:disabled { opacity: .6; cursor: not-allowed; }
+
+/* 状态配色：已保存=绿 / 保存中=黄 / 有改动未保存=橙 / 失败=红 */
+.lpm-save-box.saved .lpm-save-dot { background: #2e9e53; }
+.lpm-save-box.saved .lpm-save-text { color: #2e9e53; }
+.lpm-save-box.saving .lpm-save-dot { background: #e0a800; }
+.lpm-save-box.saving .lpm-save-text { color: #b07d00; }
+.lpm-save-box.dirty .lpm-save-dot { background: #e07b00; }
+.lpm-save-box.dirty .lpm-save-text { color: #c96a00; }
+.lpm-save-box.error .lpm-save-dot { background: #d33; }
+.lpm-save-box.error .lpm-save-text { color: #c00; }
+

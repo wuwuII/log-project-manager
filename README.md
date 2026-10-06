@@ -1,0 +1,254 @@
+# 日志与项目管理（LPM）
+
+**一个「像 Excel 一样」的本地网页软件**：工作表 + 日志周日历 + 待办 + 项目计划甘特图 + 人员工作量与积分，
+全部数据放在**一个 SQLite 文件**里，不联网、不装数据库服务、不注册表、不开机自启 —— 关掉网页 90 秒后服务自己退出。
+
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Node](https://img.shields.io/badge/Node.js-18%2B-339933)
+![SQLite](https://img.shields.io/badge/SQLite-single%20file-003B57)
+![Frontend](https://img.shields.io/badge/React-18-61DAFB)
+![Backend](https://img.shields.io/badge/Fastify-5-000000)
+
+---
+
+## 目录
+
+- [它是什么](#它是什么)
+- [功能一览](#功能一览)
+- [界面结构](#界面结构)
+- [快速开始](#快速开始)
+- [启动脚本说明](#启动脚本说明)
+- [数据存在哪（备份 / 搬迁 / Excel）](#数据存在哪备份--搬迁--excel)
+- [目录结构](#目录结构)
+- [技术栈](#技术栈)
+- [跨平台说明](#跨平台说明)
+- [老浏览器兼容（Edge 84 / Chromium 84）](#老浏览器兼容edge-84--chromium-84)
+- [已知限制](#已知限制)
+- [许可](#许可)
+
+---
+
+## 它是什么
+
+用 Excel 管项目，常见的三个难受点：**多人同时改会冲突**、**甘特图和进度全靠手工维护**、**积分/工作量统计要另外算**。
+这个工具把这三件事放进一个本地网页：像 Excel 一样**想加一列就加一个工作表**，但底子是数据库 —— 有软删除回收站、
+有操作历史、有自动保存、有整库导入导出。
+
+它**不追求联网协作**。设计取向正好相反：
+
+| 取向 | 说明 |
+|---|---|
+| 单机、离线 | 数据在本机一个文件里，不需要服务器、不需要账号 |
+| 免安装运行时 | 离线包自带便携 Node，目标电脑**连 Node.js 都不用装** |
+| 拷走就能用 | 整个文件夹（含 `data/`）复制到别的电脑，双击启动即可 |
+| 不污染系统 | 不写注册表、不建计划任务、不开机自启；用完关掉网页服务自己退出 |
+
+---
+
+## 功能一览
+
+三种工作表（可以随时新建、拖动排序、右键改名/复制/删除）：
+
+| 工作表类型 | 能干什么 |
+|---|---|
+| **日志** | 周日历式写日志（每周高度可拖拽调节，双击复位）；右侧**待办栏**：负责人 / 积分 / 完成时间 / 建立时间，未办 ☐ 已办 ☑，可拖动排序，**一键转成项目计划任务** |
+| **项目** | 任务列表（13 列，列宽可拖）+ **甘特图**（计划条 / 实际条 / 进度百分比，左右分栏可拖）；任务可拖动排序、可折叠子任务、可「推迟」改计划时间；**「进展」滑块拖到 0% / 100% 会弹窗二次确认**，并把「实际开始/实际结束时间」联动清空或补上 |
+| **人员** | 人员管理 + 工作量柱状图（每件事一种颜色，按项目分组，可切 14/30/90 天）+ 积分流水 |
+
+通用能力：
+
+- **整库 Excel 导入导出**：每个表一个 sheet，导出后用 Excel 就能看；导入支持「合并（按 id 覆盖）」与「清空后导入」，导入前自动备份
+- **回收站**：删除都是软删除，可**恢复**或**彻底删除**（含连带子项与悬空引用清理）
+- **操作历史**：每次改动的 before/after 都留痕（默认保留最近 500 条）
+- **自动保存**：输入后 0.5 秒落盘，切窗口/切工作表光标离开也会 flush；顶部有保存状态指示
+- **自动备份**：点「备份」把数据库整份复制到 `data/backups/`，自动保留最近 20 份
+- **关页自动退出**：页面每 10 秒发一次心跳，后端连续 90 秒收不到心跳就**先落盘再退出**（`PRAGMA wal_checkpoint` + 断开连接）
+
+积分规则（`backend/src/lib/points.ts`）：
+
+- 待办完成 → 拿该待办设定的积分
+- 项目任务 → **总积分 × 完成百分比**，可选「阶梯计分」（只有满 10% 的整数倍才计分）
+- 所有变动都写 `points_ledger` 流水，任务删除后**已得积分保留**
+
+---
+
+## 界面结构
+
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│ 导出Excel 导入Excel 备份 历史      保存状态 ● 已保存                  │  顶部工具栏
+├───────────────────────────────────────────────┬──────────────────────┤
+│                                               │                      │
+│   当前工作表内容                               │   待办栏（日志表才有）│
+│   · 日志 = 周日历 + 待办                       │   未办 ☐ / 已办 ☑    │
+│   · 项目 = 任务列表 ∥ 甘特图（中间竖条可拖）    │   负责人 / 积分      │
+│   · 人员 = 人员卡片 + 工作量柱状图 + 流水       │   完成时间           │
+│                                               │   →计划（转项目任务）│
+├───────────────────────────────────────────────┴──────────────────────┤
+│ 日志 │ 项目计划 │ 人员 │ ＋        底部工作表栏（可拖动排序）        │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 快速开始
+
+### 方式一：离线包（推荐，目标电脑什么都不用装）
+
+```
+1) 把整个 LPM 文件夹拷到目标电脑（U 盘 / 共享都行）
+2) 双击「启动.bat」
+3) 等几秒，浏览器自动打开 http://localhost:5174
+4) 用完直接关掉网页即可（90 秒后服务自动保存退出）；想立刻停就双击「停止.bat」
+```
+
+离线包比源码多两样东西：`node/`（便携 Node 运行时）和构建好的 `dist/`。
+自己打包看 `package_win.py`（把运行时与构建产物收进一个文件夹）。
+
+### 方式二：从源码运行
+
+需要 **Node.js 18+**（前后端都用同一个）。
+
+```bash
+# ── 后端 ──
+cd backend
+cp .env.example .env        # Windows: copy .env.example .env
+npm install
+npm run db:push             # 建表：prisma db push + prisma generate
+npm run build               # tsc → dist/
+
+# ── 前端 ──
+cd ../frontend
+npm install
+npm run build               # vite → dist/
+
+# ── 启动（回到仓库根目录）──
+node "_无窗口启动.js"        # 或双击「启动.bat」（Windows）
+# 浏览器打开 http://localhost:5174
+```
+
+### 开发模式（改代码即时生效）
+
+```bash
+# 终端 1：后端热跑（tsx）
+cd backend && npm run dev            # http://localhost:3000
+
+# 终端 2：前端 vite dev server（已配好 /api 代理到 3000）
+cd frontend && npm run dev           # http://localhost:5174
+```
+
+### 常用脚本
+
+| 位置 | 命令 | 作用 |
+|---|---|---|
+| `backend` | `npm run dev` | tsx 直跑 TS 源码（开发用） |
+| `backend` | `npm run build` | `tsc` 编译到 `dist/` |
+| `backend` | `npm run db:push` | 把 Prisma schema 推到 SQLite 并生成 client |
+| `frontend` | `npm run dev` | Vite 开发服务器 |
+| `frontend` | `npm run build` | 打包到 `frontend/dist/` |
+| `frontend` | `npm run serve` | 用 `serve.js` 单独起静态服务 + `/api` 反代 |
+
+---
+
+## 启动脚本说明
+
+| 文件 | 平台 | 作用 |
+|---|---|---|
+| `启动.bat` | Windows | 找 Node（先找便携运行时 `node\node.exe`，找不到用系统装的）→ 交给 `_无窗口启动.js` → 起服务并自动开浏览器 → 校验 5174 是否真的在监听，没起来就提示看日志 |
+| `停止.bat` | Windows | 只结束占用 `3000` / `5174` 端口的进程，**不动你机器上其它 node 程序** |
+| `_无窗口启动.js` | 跨平台 | 用 `detached` 起后端 ⇒ **没有黑窗口**；已在运行则不重复启动、只开页面；关网页 90 秒后自动退出 |
+
+> `_无窗口启动.js` 也直接用 `node "_无窗口启动.js"` 跑（Linux/macOS 用这条）。
+> 脚本里的提示文字是 ASCII 英文，是为了避免 `cmd.exe` 读 UTF-8 中文 batch 出现乱码 —— 中文文档看这份 README。
+
+---
+
+## 数据存在哪（备份 / 搬迁 / Excel）
+
+```
+data/app.db            ← 所有数据就这一个 SQLite 文件
+data/backups/          ← 点「备份」生成的副本，自动保留最近 20 份
+```
+
+- **换电脑 / 搬家**：把整个文件夹（含 `data/`）拷过去即可；只想搬数据就带上 `data/`
+- **换数据库位置**：新建工程时程序会问你选哪个位置；`backend/.env` 里的 `DATABASE_URL` 是默认值
+- **导入导出**：程序内「导出 Excel」把整库导成一个 xlsx（每表一个 sheet），「导入 Excel」选回来即可复原（导入前自动备份）
+
+数据库表结构在 `backend/prisma/schema.prisma`：
+`TableMeta`（工作表）、`LogEntry`（日志）、`Todo`（待办）、`Project` / `ProjectTask`（项目与任务）、
+`Person`（人员）、`PointsLedger`（积分流水）、`ChangeHistory`（操作历史）、`ImportExportJob`（导入导出作业）。
+
+---
+
+## 目录结构
+
+```text
+lpm/
+├── 启动.bat / 停止.bat        # Windows 一键启动 / 停止
+├── _无窗口启动.js             # 无窗口启动器（跨平台）
+├── backend/
+│   ├── prisma/schema.prisma   # 数据模型
+│   ├── src/
+│   │   ├── app.ts             # Fastify 装配
+│   │   ├── lib/               # prisma / 静态托管 / 备份 / 积分 / 历史 / 日期
+│   │   └── routes/            # tables logs todos people projects recycle data workspace heartbeat
+│   └── package.json
+└── frontend/
+    ├── index.html             # 含老浏览器 polyfill 引用
+    ├── serve.js               # 零依赖静态服务 + /api 反代（备用）
+    └── src/
+        ├── App.tsx            # 外壳（工作表栏 / 工具栏 / 保存状态）
+        ├── components/        # Workbench / SheetTabs / SaveStatus
+        ├── pages/             # LogCalendar ProjectPlan PeopleStats RankChart RecycleBin ...
+        └── utils/             # autosave / confirm（自建确认框）/ dragSort
+```
+
+---
+
+## 技术栈
+
+| 层 | 选型 |
+|---|---|
+| 语言 | TypeScript 5（前后端同一套） |
+| 后端 | Fastify 5 + Prisma 6 + Zod 3 + xlsx |
+| 前端 | React 18 + Ant Design 5 + `@dnd-kit`（拖拽排序）+ SVAR React Gantt（甘特图） |
+| 构建 | Vite 5 + tsc |
+| 数据库 | SQLite 单文件（`data/app.db`），无需数据库服务 |
+| 端口 | 后端 `3000`；单进程模式用 `5174`（`LPM_PORT`）同时托管页面与接口 |
+
+---
+
+## 跨平台说明
+
+- **后端 / 前端源码是跨平台的**：没有写死的 `C:\` 路径，全部走 `path.join`；数据库是 SQLite 文件
+- **`启动.bat` / `停止.bat` 是 Windows 专用的**（`taskkill` / `netstat`）；Linux/macOS 直接用 `node "_无窗口启动.js"` 启动、`kill` 对应端口停止
+- **`node_modules` 不能跨系统复制**：Prisma 的查询引擎按平台下载（schema 里声明了 `binaryTargets = ["native", "windows"]`），换系统后重新 `npm install` 即可，源码不用改
+- 便携 Node 运行时（`node/`）也是分平台的：Windows 是 `node.exe`，其它系统放 `node/node`
+
+---
+
+## 老浏览器兼容（Edge 84 / Chromium 84）
+
+这个工具**刻意支持很老的 Chromium（已在 Edge 84.0.522.52 上实测）**，因为有些内网机器就是老浏览器。
+踩过的坑都写成代码注释留在仓库里，主要有：
+
+1. `intl` / 现代语法 → `frontend/public/polyfills.js` 打底，Vite 目标降到 `es2019`
+2. Ant Design 5 的 `:where()` 需要 Chromium 88+、`inset` 简写需要 87+ → 样式里全部有兜底
+3. **`Modal.confirm` 在老浏览器上离场动画不触发** → 弹窗永不卸载、留一层全屏遮罩吃掉所有点击
+   → 改成自建 `utils/confirm.tsx`（零动画、关闭即真正卸载）
+4. 甘特图左侧列表与右侧时间轴**行高必须严格一致**，否则逐行错位（详见注释里的实测数值）
+
+---
+
+## 已知限制
+
+- 单机单人设计：没有登录、没有多用户并发控制（`users` 表未启用）
+- 表头固定依赖 `position: sticky`，部分很老的 Chromium 内核下不生效
+- 「进展」滑块只在**鼠标松开 / 触屏抬起**时提交；用键盘方向键改值不会落库
+- 老浏览器上首次打开需要 Ctrl+F5 强刷才能拿到新构建（`index.html` 已设 `no-store`，正常刷新即可）
+
+---
+
+## 许可
+
+[MIT](LICENSE) —— 随便用、随便改、可商用，保留版权声明即可。
