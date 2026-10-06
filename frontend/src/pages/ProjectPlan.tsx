@@ -332,8 +332,10 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
     rules.push('.wx-content[style*="padding-left: 40px"]{padding-left:20px !important}');
     rules.push('.wx-content[style*="padding-left: 60px"]{padding-left:30px !important}');
 
-    // 今天列高亮
-    rules.push('.wx-gantt .wx-scale .wx-today{background-color:#fff3e0 !important;}');
+    // 今天列高亮（2026-10-06 V30：浅黄 + 整列；整列的背景竖条在 init 里插到 .wx-area）
+    rules.push('.wx-gantt .wx-scale .wx-today{background-color:#fff9c4 !important;}');
+    // 背景竖条：z-index:0 → 永远在横条（.wx-bar / .wx-baseline）之下，绝不遮挡
+    rules.push('.wx-gantt .gantt-today-column{z-index:0 !important;pointer-events:none !important;}');
 
     // 横条：去蓝边、禁拖拽（技能 #11：pointer-events:none，点击走 select-task）
     // 🔴 2026-10-05 V21 横条必须补偿「居中偏移」（用户原话：甘特图那个横线要居中，有点审美）
@@ -825,7 +827,16 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
                 start={ganttStart}
                 scales={[
                   { unit: 'month', step: 1, format: '%m月' },
-                  { unit: 'day', step: 1, format: '%d' },
+                  {
+                    unit: 'day', step: 1, format: '%d',
+                    // 🔴 禁用 toISOString 比较（UTC+8 会错一天，技能 #8a 踩过）→ 只用本地 getFullYear/Month/Date
+                    css: (date: Date) => {
+                      const t = new Date();
+                      return date.getFullYear() === t.getFullYear() &&
+                        date.getMonth() === t.getMonth() &&
+                        date.getDate() === t.getDate() ? 'wx-today' : '';
+                    },
+                  },
                 ]}
                 columns={[{ id: 'text', header: '任务', width: 170 }]}
                 cellHeight={30}
@@ -839,6 +850,41 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
                     const id = e?.id || e?.task?.id;
                     const hit = rows.find((r) => r.id === id);
                     if (hit) openEdit(hit);
+                  });
+                  // 今天列高亮：整列（顶部刻度 + 下方图表区背景竖条）
+                  // ⚠️ 竖条插在 .wx-area 最前面 + z-index:0 + pointer-events:none → 只在背景，不遮挡横条
+                  api.on('render-data', () => {
+                    setTimeout(() => {
+                      const gantt = document.querySelector('.wx-gantt') as HTMLElement | null;
+                      if (!gantt) return;
+                      // 防重复堆积：先清旧的
+                      gantt.querySelectorAll('.gantt-today-column').forEach((n) => n.remove());
+                      const todayCells = gantt.querySelectorAll('.wx-scale .wx-row .wx-today');
+                      const area = gantt.querySelector('.wx-area') as HTMLElement | null;
+                      if (!area || todayCells.length === 0) return;
+                      const cell0 = todayCells[0] as HTMLElement;
+                      // 同列所有刻度行一起染色（月行 + 日行）
+                      const row0 = cell0.parentElement as HTMLElement | null;
+                      if (row0) {
+                        const idx = Array.prototype.indexOf.call(row0.children, cell0);
+                        if (idx >= 0) {
+                          gantt.querySelectorAll('.wx-scale .wx-row').forEach((r: any) => {
+                            const c = r.children[idx] as HTMLElement | undefined;
+                            if (c) c.style.backgroundColor = '#fff9c4';
+                          });
+                        }
+                      }
+                      // 背景竖条：用实测 rect 算偏移，不硬算 cellWidth
+                      const areaRect = area.getBoundingClientRect();
+                      const cellRect = cell0.getBoundingClientRect();
+                      const left = Math.round(cellRect.left - areaRect.left);
+                      const width = Math.round(cellRect.width);
+                      const strip = document.createElement('div');
+                      strip.className = 'gantt-today-column';
+                      strip.style.cssText = 'position:absolute;left:' + left + 'px;top:0;width:' + width + 'px;height:100%;background:#fff9c4;z-index:0;pointer-events:none;';
+                      area.style.position = 'relative';
+                      area.insertBefore(strip, area.firstChild);
+                    }, 60);
                   });
                 }}
               />
