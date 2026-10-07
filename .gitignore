@@ -28,3 +28,9 @@ Thumbs.db
 .vscode/
 __pycache__/
 *.pyc
+
+# 备份/临时文件（别进仓库）
+*.bak.*
+*.orig
+*.tmp
+*~
