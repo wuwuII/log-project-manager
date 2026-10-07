@@ -18,19 +18,8 @@ import { flush, getDraft, queueSave, saveDraft } from '../utils/autosave';
 import type { LogEntry, Person, TableMeta, Todo } from '../types';
 
 const WD = ['一', '二', '三', '四', '五', '六', '日'];
-/**
- * ⚙️ 滚动窗口（**要调就改这三个数**，单位：周）
- *   WEEKS_BACK  本周之前渲染多少周 ← 2026-10-06 定：8 周
- *   WEEKS_FWD   本周之后渲染多少周 ← 2026-10-06 定：18 周
- *   JUMP_WEEKS  「前/后跳」每次跳几周 ← 12 周（约 3 个月，跳一次留重叠，不容易迷路）
- * 合计渲染 WEEKS_BACK + WEEKS_FWD = 26 周（约半年）；改大了首屏格子变多，老 Edge 84 上会更慢。
- */
-const WEEKS_BACK = 8;
-const WEEKS_FWD = 18;
-const WEEKS_SHOWN = WEEKS_BACK + WEEKS_FWD;
-const JUMP_WEEKS = 12;
-/** 默认窗口起点 = 本周一往前 WEEKS_BACK 周（首次进工程 / 点「回到本周」都用它） */
-const seedStart = () => addDays(mondayOf(new Date()), -7 * WEEKS_BACK);
+/** 一次渲染 12 周（约 3 个月），靠滚轮上下滚动查看，不用翻页按钮 */
+const WEEKS_SHOWN = 12;
 /** 每周默认高度 / 可拖范围（px）。默认值必须与 index.css 的 --lpm-week-h 一致。 */
 const DEFAULT_WEEK_H = 150;
 const MIN_WEEK_H = 90;
@@ -70,26 +59,8 @@ interface Props {
 }
 
 const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onConfigSaved }) => {
-  // 窗口起点：首次进工程 = 本周一往前 WEEKS_BACK 周；之后按该工作表 config 里记住的位置恢复
-  const [rangeStart, setRangeStart] = useState<Date>(() => seedStart());
-  /** 滚动容器（用于"跳哪看哪"与恢复上次位置） */
-  const scrollRef = useRef<HTMLDivElement>(null);
-  /** 本次渲染后要滚到哪：today=当天那一周（首次进工程）/ week=指定周 / top=窗口顶部 */
-  const pendingScrollRef = useRef<{ mode: 'today' } | { mode: 'week'; key: string } | { mode: 'top' } | null>({ mode: 'today' });
-  /** 位置保存防抖计时器 + 上次存过的值（值没变就不写库，避免刷操作记录） */
-  const saveViewTimerRef = useRef<number | null>(null);
-  const lastSavedViewRef = useRef<string>('');
-
-  /** 把「窗口起点 + 顶部那一周」写回该工作表 config（读-改-写合并，保留 project_id / week_heights 等字段） */
-  const persistView = useCallback((range: string, topWeek: string) => {
-    const sig = range + '|' + topWeek;
-    if (sig === lastSavedViewRef.current) return;
-    lastSavedViewRef.current = sig;
-    const nextCfg = { ...cfgRef.current, log_view: { ...(cfgRef.current.log_view || {}), range, topWeek } };
-    cfgRef.current = nextCfg;
-    onConfigSaved?.(nextCfg);
-    void api.patch(`/tables/${table.id}`, { config: nextCfg }).catch(() => {});
-  }, [table.id, onConfigSaved]);
+  // 从"本周往前 4 周"开始渲染，打开后自动滚到本周
+  const [rangeStart, setRangeStart] = useState<Date>(() => addDays(mondayOf(new Date()), -28));
   const [entries, setEntries] = useState<Record<string, string>>({});
   const [todos, setTodos] = useState<Todo[]>([]);
   const [todoTitle, setTodoTitle] = useState('');
@@ -145,28 +116,9 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
     void loadTodos();
   }, [loadTodos]);
 
-  /** 打开/切换工作表、或点了前/后跳之后：按 pendingScrollRef 决定滚到哪
-   *  · 首次进工程 → 滚到「今天」那一周并居中（用户 2026-10-06 要求）
-   *  · 恢复上次位置 → 滚到记住的那一周（顶部对齐）
-   *  · 点了前/后跳 → 显示新窗口的顶部
-   */
+  /** 打开/切换工作表时，把视图滚到「今天」那一行（而不是从 4 周前开始看） */
   useEffect(() => {
     const t = window.setTimeout(() => {
-      const m = pendingScrollRef.current;
-      const sc = scrollRef.current;
-      pendingScrollRef.current = null;
-      if (m && m.mode === 'week' && sc) {
-        const el = sc.querySelector(`[data-week="${m.key}"]`) as HTMLElement | null;
-        if (el) {
-          // ⚠️ 用 rect 差值滚，不要用 scrollIntoView：后者会连带滚动外层容器，
-          //    实测每次恢复会偏大约一周（-163px）。rect 差值只影响这一个容器。
-          const sr = sc.getBoundingClientRect();
-          const er = el.getBoundingClientRect();
-          sc.scrollTop += er.top - sr.top;
-          return;
-        }
-      }
-      if (m && m.mode === 'top') { if (sc) sc.scrollTop = 0; return; }
       todayRef.current?.scrollIntoView({ block: 'center' });
     }, 260);
     return () => window.clearTimeout(t);
@@ -188,18 +140,6 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
     try { cfgRef.current = JSON.parse(table.config || '{}') || {}; } catch { cfgRef.current = {}; }
     const wh = cfgRef.current.week_heights;
     setWeekHeights(wh && typeof wh === 'object' ? { ...wh } : {});
-    // 位置记忆（用户 2026-10-06）：停在哪儿，下次打开就显示哪儿；第一次进工程才用"当天那一周"
-    const v = cfgRef.current.log_view;
-    if (v && typeof v.range === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.range)) {
-      const d = new Date(v.range + 'T00:00:00');
-      setRangeStart(isNaN(d.getTime()) ? seedStart() : d);
-      pendingScrollRef.current = v.topWeek ? { mode: 'week', key: v.topWeek } : { mode: 'top' };
-      lastSavedViewRef.current = v.range + '|' + (v.topWeek || '');
-    } else {
-      setRangeStart(seedStart());
-      pendingScrollRef.current = { mode: 'today' };
-      lastSavedViewRef.current = '';
-    }
     // 只在「切换工作表」时按 config 重新播种；同一张表 config 变化（例如本页自己写回）不重置，
     // 免得正在拖动时被清空。故意只依赖 table.id。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -358,27 +298,6 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
     .sort((a, b) => new Date(b.completed_at || 0).getTime() - new Date(a.completed_at || 0).getTime());
   const pMap = Object.fromEntries(people.map((p) => [p.id, p.name]));
 
-  /** 跳到指定的某一天：窗口起点 = 那一天所在周的周一，跳完那一天就在顶部 */
-  const jumpToDate = (v: string) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(v || '')) return;
-    const d = new Date(v + 'T00:00:00');            // 本地时区解析，别用 new Date('YYYY-MM-DD')（会按 UTC）
-    if (isNaN(d.getTime())) return;
-    void flush();
-    const target = mondayOf(d);
-    setRangeStart(target);
-    pendingScrollRef.current = { mode: 'top' };
-    persistView(ymd(target), ymd(target));          // 跳完这个窗口的顶部就是那一周
-  };
-
-  /** 前/后跳：窗口整体平移 n 周；跳完显示新窗口顶部，并把新位置记下来 */
-  const jump = (n: number) => () => {
-    void flush();
-    const d = addDays(rangeStart, n * 7);
-    setRangeStart(d);
-    pendingScrollRef.current = { mode: 'top' };
-    persistView(ymd(d), '');
-  };
-
   const fmtTime = (s?: string | null) => {
     if (!s) return '';
     const d = new Date(s);
@@ -392,25 +311,11 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
           <span style={{ color: '#666' }}>
             {ymd(days[0])} ~ {ymd(days[days.length - 1])}
           </span>
-          <Button size="small" onClick={jump(-JUMP_WEEKS)}>{`←  前 ${JUMP_WEEKS} 周`}</Button>
-          <Button size="small" onClick={jump(JUMP_WEEKS)}>{`后 ${JUMP_WEEKS} 周  →`}</Button>
-          <span style={{ color: '#999', fontSize: 11.5 }}>跳到</span>
-          <input
-            type="date"
-            className="lpm-jump-date"
-            aria-label="跳到某一天"
-            title="选一天，跳到它所在的那一周"
-            onChange={(e) => jumpToDate(e.target.value)}
-            style={{ fontSize: 12, padding: '1px 4px', borderRadius: 4, border: '1px solid #d9d9d9', background: '#fff' }}
-          />
           <Button
             size="small"
             onClick={() => {
               void flush();
-              const d = seedStart();
-              setRangeStart(d);
-              pendingScrollRef.current = { mode: 'today' };
-              persistView(ymd(d), '');
+              setRangeStart(addDays(mondayOf(new Date()), -28));
             }}
           >
             回到本周
@@ -422,23 +327,7 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
         </div>
 
         {/* 滚轮直接上下滚，不用按钮翻页 */}
-        <div
-          className="lpm-cal-scroll"
-          ref={scrollRef}
-          style={{ flex: 1, minHeight: 0 }}
-          onScroll={() => {
-            if (saveViewTimerRef.current) window.clearTimeout(saveViewTimerRef.current);
-            saveViewTimerRef.current = window.setTimeout(() => {
-              const sc = scrollRef.current;
-              if (!sc) return;
-              const rows = Array.from(sc.querySelectorAll('.lpm-week-row')) as HTMLElement[];
-              // 判据与"恢复"保持一致（都用 rect），否则每恢复一次会漂一周
-              const sr = sc.getBoundingClientRect();
-              const first = rows.find((r) => r.getBoundingClientRect().top >= sr.top - 1) || rows[rows.length - 1];
-              persistView(ymd(rangeStart), first?.getAttribute('data-week') || '');
-            }, 1200);
-          }}
-        >
+        <div className="lpm-cal-scroll" style={{ flex: 1, minHeight: 0 }}>
           {Array.from({ length: WEEKS_SHOWN }).map((_, w) => {
             const weekDays = days.slice(w * 7, w * 7 + 7);
             const isCurrentWeek = weekDays.some((d) => ymd(d) === todayStr);
@@ -448,7 +337,6 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
               <div
                 className="lpm-week-row"
                 key={w}
-                data-week={weekKey}
                 ref={isCurrentWeek ? todayRef : undefined}
                 style={{ '--lpm-week-h': weekH(weekKey) + 'px' } as React.CSSProperties}
               >

@@ -358,18 +358,6 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
     .sort((a, b) => new Date(b.completed_at || 0).getTime() - new Date(a.completed_at || 0).getTime());
   const pMap = Object.fromEntries(people.map((p) => [p.id, p.name]));
 
-  /** 跳到指定的某一天：窗口起点 = 那一天所在周的周一，跳完那一天就在顶部 */
-  const jumpToDate = (v: string) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(v || '')) return;
-    const d = new Date(v + 'T00:00:00');            // 本地时区解析，别用 new Date('YYYY-MM-DD')（会按 UTC）
-    if (isNaN(d.getTime())) return;
-    void flush();
-    const target = mondayOf(d);
-    setRangeStart(target);
-    pendingScrollRef.current = { mode: 'top' };
-    persistView(ymd(target), ymd(target));          // 跳完这个窗口的顶部就是那一周
-  };
-
   /** 前/后跳：窗口整体平移 n 周；跳完显示新窗口顶部，并把新位置记下来 */
   const jump = (n: number) => () => {
     void flush();
@@ -394,15 +382,6 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
           </span>
           <Button size="small" onClick={jump(-JUMP_WEEKS)}>{`←  前 ${JUMP_WEEKS} 周`}</Button>
           <Button size="small" onClick={jump(JUMP_WEEKS)}>{`后 ${JUMP_WEEKS} 周  →`}</Button>
-          <span style={{ color: '#999', fontSize: 11.5 }}>跳到</span>
-          <input
-            type="date"
-            className="lpm-jump-date"
-            aria-label="跳到某一天"
-            title="选一天，跳到它所在的那一周"
-            onChange={(e) => jumpToDate(e.target.value)}
-            style={{ fontSize: 12, padding: '1px 4px', borderRadius: 4, border: '1px solid #d9d9d9', background: '#fff' }}
-          />
           <Button
             size="small"
             onClick={() => {
