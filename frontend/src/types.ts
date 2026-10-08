@@ -90,3 +90,35 @@ export interface RecycleRow {
   parent_name?: string | null;
   parent_deleted?: boolean;
 }
+
+/** 提醒重复方式：只此一次 / 每周 / 每月 / 每年 */
+export type ReminderRepeat = 'once' | 'weekly' | 'monthly' | 'yearly';
+
+/**
+ * 提醒（2026-10-08 新增）—— 日志页格子里「提前写好的文字」
+ * rule 由后端解析成对象：
+ *   once    { date: 'YYYY-MM-DD' }
+ *   weekly  { weekdays: number[] }  1=周一 … 7=周日
+ *   monthly { days: number[] }      每月几号
+ *   yearly  { dates: { month: number; day: number }[] }
+ */
+export interface Reminder {
+  id: string;
+  table_id: string;
+  text: string;
+  repeat: ReminderRepeat;
+  rule: any;
+  start_date?: string | null;
+  end_date?: string | null;
+  enabled: boolean;
+  color?: string | null;
+  sort_order: number;
+}
+
+/** 展开到某一天的提醒（日志格子用） */
+export interface ReminderHit {
+  id: string;
+  text: string;
+  color?: string | null;
+  repeat: ReminderRepeat;
+}

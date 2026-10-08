@@ -3,6 +3,7 @@ import { confirmDialog } from '../utils/confirm';
 import { Button, Input, Modal, Radio, Space, Tooltip, message } from 'antd';
 import {
   AppstoreOutlined,
+  CheckCircleOutlined,
   DatabaseOutlined,
   ExportOutlined,
   HistoryOutlined,
@@ -215,14 +216,38 @@ const Workbench: React.FC = () => {
     }
   };
 
+  /**
+   * 整库备份 —— 2026-10-08 用户反馈「点了没反应，不知道备份去哪了」。
+   * 现在：① 明确 toast；② 弹窗把「存到哪个目录、这次是哪份、库里现在有哪些备份」全摆出来。
+   */
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [backupInfo, setBackupInfo] = useState<{ file?: string; dir?: string; list: any[] }>({ list: [] });
+
   const doBackup = async () => {
     try {
       await flush();
       const r = await api.post('/backup');
+      let list: any[] = [];
+      try {
+        const b = await api.get('/backups');
+        list = b.data.backups || [];
+      } catch {
+        list = [];
+      }
+      setBackupInfo({ file: r.data.file, dir: r.data.dir, list });
+      setBackupOpen(true);
       message.success('已备份：' + (r.data.file || ''));
     } catch (e: any) {
       message.error(e?.friendlyMessage || '备份失败');
     }
+  };
+
+  const fmtSize = (n: number) => (n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(2) + ' MB' : Math.round(n / 1024) + ' KB');
+  const fmtTime = (v: any) => {
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    const p = (x: number) => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   };
 
   return (
@@ -351,6 +376,48 @@ const Workbench: React.FC = () => {
         width={360}
       >
         <Input value={renameName} onChange={(e) => setRenameName(e.target.value)} onPressEnter={handleRename} />
+      </Modal>
+
+      {/* ── 整库备份结果（2026-10-08 新增：让「备份到哪、有哪些」看得见）── */}
+      <Modal
+        title="整库备份"
+        open={backupOpen}
+        onCancel={() => setBackupOpen(false)}
+        footer={
+          <Button type="primary" onClick={() => setBackupOpen(false)}>
+            知道了
+          </Button>
+        }
+        width={560}
+      >
+        <div className="lpm-bk-ok">
+          <CheckCircleOutlined style={{ color: '#217346', marginRight: 6 }} />
+          备份成功
+        </div>
+        <div className="lpm-bk-line">
+          <span className="k">本次文件</span>
+          <span className="v">{backupInfo.file || '—'}</span>
+        </div>
+        <div className="lpm-bk-line">
+          <span className="k">存放目录</span>
+          <span className="v">{backupInfo.dir || '（后端未返回目录；通常在程序目录下的 data\\backups\\）'}</span>
+        </div>
+        <div className="lpm-bk-tip">
+          备份 = 把数据库文件整份复制一份，出问题时可用它整库回滚。只保留最近 20 份，多的自动清掉。
+        </div>
+        <div className="lpm-bk-list-title">现有备份（{backupInfo.list.length} 份，新的在最上面）</div>
+        <div className="lpm-bk-list">
+          {backupInfo.list.length === 0 && (
+            <div style={{ color: '#aaa', fontSize: 12, padding: 6 }}>（暂无）</div>
+          )}
+          {backupInfo.list.map((b: any) => (
+            <div className="lpm-bk-row" key={b.name}>
+              <span className="n">{b.name}</span>
+              <span className="s">{fmtSize(b.size)}</span>
+              <span className="t">{fmtTime(b.mtime)}</span>
+            </div>
+          ))}
+        </div>
       </Modal>
 
       <ImportExportModal open={ioOpen} onClose={() => setIoOpen(false)} onDone={() => void loadTables(true)} />

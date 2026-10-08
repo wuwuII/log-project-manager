@@ -10,6 +10,7 @@ import peopleRoutes from './routes/people';
 import dataRoutes from './routes/data';
 import workspaceRoutes from './routes/workspace';
 import recycleRoutes from './routes/recycle';
+import remindersRoutes from './routes/reminders'; // 2026-10-08 提醒功能
 // ── 方案 C3 新增 ──────────────────────────────────────────────
 import staticPlugin from './lib/static';
 import heartbeatRoutes, { gracefulShutdown } from './routes/heartbeat';
@@ -76,6 +77,7 @@ async function start() {
   await app.register(dataRoutes);
   await app.register(workspaceRoutes);
   await app.register(recycleRoutes);
+  await app.register(remindersRoutes); // 2026-10-08 提醒功能
   await app.register(heartbeatRoutes); // 方案 C3：心跳 + 看门狗
 
   // ── 方案 C3 第 5 块：工程文件缺失保护 ──────────────────────

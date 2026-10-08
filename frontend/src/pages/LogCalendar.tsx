@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirmDialog } from '../utils/confirm';
-import { Button, Input, Modal, Select, Tooltip, message } from 'antd';
+import { Button, Checkbox, Input, Modal, Select, Switch, Tooltip, message } from 'antd';
 import {
+  BellOutlined,         // 提醒
   DeleteOutlined,
+  EditOutlined,
   MinusOutlined,
   PlusOutlined,
   BorderOutlined,        // 未办：空方框 ☐
@@ -15,7 +17,7 @@ import api from '../api';
 import TodoToProject from './TodoToProject';
 import { SortableItem, reorderIds, useDragSensors } from '../utils/dragSort';
 import { flush, getDraft, queueSave, saveDraft } from '../utils/autosave';
-import type { LogEntry, Person, TableMeta, Todo } from '../types';
+import type { LogEntry, Person, Reminder, ReminderHit, ReminderRepeat, TableMeta, Todo } from '../types';
 
 const WD = ['一', '二', '三', '四', '五', '六', '日'];
 /**
@@ -144,6 +146,155 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
   useEffect(() => {
     void loadTodos();
   }, [loadTodos]);
+
+  // ── 提醒（2026-10-08 用户需求：日志页加提醒，格子里的"提前写好的文字"）────
+  //   每张日志工作表各管各的（按 table_id 存）；后端按 from~to 把重复规则展开成 by_date。
+  //   老后端没有 /reminders 接口时静默降级（catch → 空），不影响日志本身。
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [reminderHits, setReminderHits] = useState<Record<string, ReminderHit[]>>({});
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [rText, setRText] = useState('');
+  const [rRepeat, setRRepeat] = useState<ReminderRepeat>('once');
+  const [rDate, setRDate] = useState('');
+  const [rWeekdays, setRWeekdays] = useState<number[]>([]);
+  const [rMonthDays, setRMonthDays] = useState<number[]>([]);
+  const [rYearDates, setRYearDates] = useState<{ month: number; day: number }[]>([]);
+  const [rStart, setRStart] = useState('');
+  const [rEnd, setREnd] = useState('');
+  const [rEnabled, setREnabled] = useState(true);
+
+  const loadReminders = useCallback(async () => {
+    const from = ymd(days[0]);
+    const to = ymd(days[days.length - 1]);
+    try {
+      const r = await api.get('/reminders', { params: { table_id: table.id, from, to } });
+      setReminders((r.data.reminders as Reminder[]) || []);
+      setReminderHits((r.data.by_date as Record<string, ReminderHit[]>) || {});
+    } catch {
+      setReminders([]);
+      setReminderHits({});
+    }
+  }, [table.id, days]);
+
+  useEffect(() => {
+    void loadReminders();
+  }, [loadReminders]);
+
+  /** 提醒规则说成人话（列表里显示用） */
+  const ruleText = (r: Reminder) => {
+    const k = r.rule || {};
+    if (r.repeat === 'once') return k.date ? `只此一次 ${k.date}` : '只此一次（未选日期）';
+    if (r.repeat === 'weekly') {
+      const ws = (k.weekdays || []).map((w: number) => '周' + (WD[w - 1] || '?'));
+      return '每周 ' + (ws.join('、') || '（未选）');
+    }
+    if (r.repeat === 'monthly') return '每月 ' + ((k.days || []).join('、') || '（未选）') + ' 号';
+    if (r.repeat === 'yearly') {
+      const ds = (k.dates || []).map((x: any) => `${x.month}月${x.day}日`);
+      return '每年 ' + (ds.join('、') || '（未选）');
+    }
+    return '';
+  };
+
+  const resetReminderForm = () => {
+    setEditingId(null);
+    setRText('');
+    setRRepeat('once');
+    setRDate(todayStr);
+    setRWeekdays([]);
+    setRMonthDays([]);
+    setRYearDates([{ month: new Date().getMonth() + 1, day: new Date().getDate() }]);
+    setRStart('');
+    setREnd('');
+    setREnabled(true);
+  };
+
+  const openReminderEditor = (r?: Reminder) => {
+    if (!r) {
+      resetReminderForm();
+      return;
+    }
+    const k = r.rule || {};
+    setEditingId(r.id);
+    setRText(r.text);
+    setRRepeat(r.repeat);
+    setRDate(k.date || '');
+    setRWeekdays(Array.isArray(k.weekdays) ? k.weekdays.map(Number) : []);
+    setRMonthDays(Array.isArray(k.days) ? k.days.map(Number) : []);
+    setRYearDates(
+      Array.isArray(k.dates) && k.dates.length
+        ? k.dates.map((x: any) => ({ month: Number(x.month), day: Number(x.day) }))
+        : [{ month: 1, day: 1 }],
+    );
+    setRStart(r.start_date || '');
+    setREnd(r.end_date || '');
+    setREnabled(r.enabled !== false);
+  };
+
+  const buildRule = () => {
+    if (rRepeat === 'once') return { date: rDate };
+    if (rRepeat === 'weekly') return { weekdays: rWeekdays };
+    if (rRepeat === 'monthly') return { days: rMonthDays };
+    return { dates: rYearDates.filter((x) => x.month && x.day) };
+  };
+
+  const ruleProblem = () => {
+    if (!rText.trim()) return '请填写提醒内容';
+    if (rRepeat === 'once' && !rDate) return '请选择日期';
+    if (rRepeat === 'weekly' && !rWeekdays.length) return '请至少选一个星期几';
+    if (rRepeat === 'monthly' && !rMonthDays.length) return '请至少选一个号';
+    if (rRepeat === 'yearly' && !rYearDates.filter((x) => x.month && x.day).length) return '请至少填一个「几月几号」';
+    if (rStart && rEnd && rStart > rEnd) return '开始日期不能晚于结束日期';
+    return '';
+  };
+
+  const saveReminder = async () => {
+    const bad = ruleProblem();
+    if (bad) return message.warning(bad);
+    const wasEdit = !!editingId;
+    const body = {
+      table_id: table.id,
+      text: rText.trim(),
+      repeat: rRepeat,
+      rule: buildRule(),
+      start_date: rStart || null,
+      end_date: rEnd || null,
+      enabled: rEnabled,
+    };
+    try {
+      if (editingId) await api.patch(`/reminders/${editingId}`, body);
+      else await api.post('/reminders', body);
+      await loadReminders();
+      resetReminderForm();
+      message.success(wasEdit ? '已保存' : '已添加提醒');
+    } catch (e: any) {
+      message.error(e?.friendlyMessage || '保存失败');
+    }
+  };
+
+  const delReminder = (r: Reminder) => {
+    confirmDialog({
+      title: '删除提醒',
+      content: `确定删除提醒「${r.text}」？（删掉后格子里就不显示了）`,
+      okText: '删除',
+      danger: true,
+      onOk: async () => {
+        await api.delete(`/reminders/${r.id}`);
+        await loadReminders();
+        if (editingId === r.id) resetReminderForm();
+      },
+    });
+  };
+
+  const toggleReminderEnabled = async (r: Reminder) => {
+    try {
+      await api.patch(`/reminders/${r.id}`, { enabled: !r.enabled });
+      await loadReminders();
+    } catch (e: any) {
+      message.error(e?.friendlyMessage || '操作失败');
+    }
+  };
 
   /** 打开/切换工作表、或点了前/后跳之后：按 pendingScrollRef 决定滚到哪
    *  · 首次进工程 → 滚到「今天」那一周并居中（用户 2026-10-06 要求）
@@ -415,6 +566,16 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
           >
             回到本周
           </Button>
+          <Button
+            size="small"
+            icon={<BellOutlined />}
+            onClick={() => {
+              resetReminderForm();
+              setReminderOpen(true);
+            }}
+          >
+            提醒{reminders.length ? `（${reminders.length}）` : ''}
+          </Button>
           <span style={{ flex: 1 }} />
           <span style={{ color: '#999', fontSize: 11.5 }}>
             抓某一周的日期栏上下拖 = 调这一周高度（双击恢复默认）· 滚轮查看多周 · 输入自动保存
@@ -472,7 +633,24 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
                           周{WD[i]}
                         </span>
                       </div>
-                      <div className="lpm-day-body">
+                      <div
+                        className={'lpm-day-body' + (reminderHits[key]?.length ? ' has-rem' : '')}
+                      >
+                        {!!reminderHits[key]?.length && (
+                          <div className="lpm-reminders">
+                            {reminderHits[key].map((h) => (
+                              <div
+                                className="lpm-reminder"
+                                key={key + '-' + h.id}
+                                title={'提醒：' + h.text}
+                                style={h.color ? { borderLeftColor: h.color } : undefined}
+                              >
+                                <BellOutlined />
+                                <span>{h.text}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <textarea
                           className="lpm-day-textarea"
                           value={entries[key] ?? ''}
@@ -607,6 +785,163 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
           </>
         )}
       </div>
+
+      {/* ── 提醒管理（2026-10-08 用户需求）── */}
+      <Modal
+        title={`提醒 · ${table.name}`}
+        open={reminderOpen}
+        onCancel={() => setReminderOpen(false)}
+        footer={null}
+        width={660}
+      >
+        <div className="lpm-rem-tip">
+          提醒会直接显示在<b>对应日期的格子</b>里（相当于提前写好的文字）；周期提醒会按规则自动落到每一天。
+        </div>
+
+        <div className="lpm-rem-list">
+          {reminders.length === 0 && (
+            <div style={{ color: '#aaa', fontSize: 12, padding: 8 }}>
+              还没有提醒。在下面填一条试试 —— 支持「只此一次 / 每周几 / 每月几号 / 每年几月几号」，还能限定生效的起止日期。
+            </div>
+          )}
+          {reminders.map((r) => (
+            <div className="lpm-rem-row" key={r.id}>
+              <BellOutlined style={{ color: r.enabled ? '#faad14' : '#ccc', marginTop: 3 }} />
+              <div className="lpm-rem-main">
+                <div className="lpm-rem-text">{r.text}</div>
+                <div className="lpm-rem-meta">
+                  {ruleText(r)}
+                  {' · '}
+                  {r.start_date || r.end_date
+                    ? `${r.start_date || '不限'} ~ ${r.end_date || '不限'}`
+                    : '不限时间范围'}
+                  {r.enabled ? '' : ' · 已停用'}
+                </div>
+              </div>
+              <Switch size="small" checked={r.enabled} onChange={() => toggleReminderEnabled(r)} />
+              <Button size="small" type="text" title="编辑" icon={<EditOutlined />} onClick={() => openReminderEditor(r)} />
+              <Button size="small" type="text" danger title="删除" icon={<DeleteOutlined />} onClick={() => delReminder(r)} />
+            </div>
+          ))}
+        </div>
+
+        <div className="lpm-rem-form-title">{editingId ? '编辑提醒' : '新增提醒'}</div>
+
+        <Input
+          placeholder="办什么事（例如：交周报 / 张三体检 / 项目评审）"
+          value={rText}
+          onChange={(e) => setRText(e.target.value)}
+          style={{ marginBottom: 8 }}
+        />
+
+        <div className="lpm-rem-line">
+          <span className="lbl">重复</span>
+          <Select
+            size="small"
+            style={{ width: 120 }}
+            value={rRepeat}
+            onChange={(v) => setRRepeat(v as ReminderRepeat)}
+            options={[
+              { value: 'once', label: '只此一次' },
+              { value: 'weekly', label: '每周' },
+              { value: 'monthly', label: '每月' },
+              { value: 'yearly', label: '每年' },
+            ]}
+          />
+          {rRepeat === 'once' && (
+            <input
+              type="date"
+              className="lpm-jump-date"
+              value={rDate}
+              onChange={(e) => setRDate(e.target.value)}
+            />
+          )}
+          {rRepeat === 'weekly' && (
+            <Checkbox.Group
+              value={rWeekdays}
+              onChange={(v) => setRWeekdays(v as number[])}
+              options={WD.map((w, i) => ({ label: '周' + w, value: i + 1 }))}
+            />
+          )}
+          {rRepeat === 'monthly' && (
+            <Select
+              size="small"
+              mode="multiple"
+              style={{ minWidth: 300, maxWidth: 420 }}
+              placeholder="每月几号（可多选）"
+              value={rMonthDays}
+              onChange={(v) => setRMonthDays(v as number[])}
+              options={Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: `${i + 1}号` }))}
+            />
+          )}
+          {rRepeat === 'yearly' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+              {rYearDates.map((x, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <Select
+                    size="small"
+                    style={{ width: 84 }}
+                    value={x.month}
+                    onChange={(v) => setRYearDates((p) => p.map((y, j) => (j === i ? { ...y, month: v } : y)))}
+                    options={Array.from({ length: 12 }, (_, m) => ({ value: m + 1, label: `${m + 1}月` }))}
+                  />
+                  <Select
+                    size="small"
+                    style={{ width: 84 }}
+                    value={x.day}
+                    onChange={(v) => setRYearDates((p) => p.map((y, j) => (j === i ? { ...y, day: v } : y)))}
+                    options={Array.from({ length: 31 }, (_, d) => ({ value: d + 1, label: `${d + 1}日` }))}
+                  />
+                  {rYearDates.length > 1 && (
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() => setRYearDates((p) => p.filter((_, j) => j !== i))}
+                    />
+                  )}
+                </div>
+              ))}
+              <Button size="small" onClick={() => setRYearDates((p) => [...p, { month: 1, day: 1 }])}>
+                + 再加一天
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <div className="lpm-rem-line">
+          <span className="lbl">生效范围</span>
+          <input
+            type="date"
+            className="lpm-jump-date"
+            value={rStart}
+            onChange={(e) => setRStart(e.target.value)}
+          />
+          <span style={{ color: '#999' }}>到</span>
+          <input
+            type="date"
+            className="lpm-jump-date"
+            value={rEnd}
+            onChange={(e) => setREnd(e.target.value)}
+          />
+          <span style={{ color: '#999', fontSize: 11.5 }}>（留空 = 不限）</span>
+        </div>
+
+        <div className="lpm-rem-line">
+          <span className="lbl">启用</span>
+          <Switch size="small" checked={rEnabled} onChange={setREnabled} />
+          <span style={{ flex: 1 }} />
+          {editingId && (
+            <Button size="small" onClick={resetReminderForm}>
+              取消编辑
+            </Button>
+          )}
+          <Button size="small" type="primary" onClick={saveReminder}>
+            {editingId ? '保存修改' : '添加提醒'}
+          </Button>
+        </div>
+      </Modal>
 
       <TodoToProject
         open={!!transferTodo}

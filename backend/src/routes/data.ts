@@ -18,6 +18,7 @@ const SHEETS = {
   people: '人员',
   ledger: '积分流水',
   history: '操作历史',
+  reminders: '提醒', // 2026-10-08 新增：导出/导入都要带上，否则导出再导回来提醒会丢
 };
 
 export default async function (app: FastifyInstance) {
@@ -43,10 +44,15 @@ export default async function (app: FastifyInstance) {
       if (one.type === 'log') {
         const myLogs = await prisma.logEntry.findMany({ where: { table_id: one.id }, orderBy: { entry_date: 'asc' } });
         const myTodos = await prisma.todo.findMany({ where: { table_id: one.id, deleted_at: null } });
+        const myRems = await prisma.reminder.findMany({ where: { table_id: one.id, deleted_at: null }, orderBy: { sort_order: 'asc' } });
         add2(SHEETS.logs, myLogs.map((l) => ({ id: l.id, entry_date: l.entry_date, content: l.content, updated_at: l.updated_at })));
         add2(SHEETS.todos, myTodos.map((t) => ({
           id: t.id, title: t.title, assignee_id: t.assignee_id, assignee_name: pMap2[t.assignee_id || ''] || '',
           points: t.points, status: t.status, record_time: t.record_time, completed_at: t.completed_at,
+        })));
+        add2(SHEETS.reminders, myRems.map((r) => ({
+          id: r.id, text: r.text, repeat: r.repeat, rule: r.rule,
+          start_date: r.start_date, end_date: r.end_date, enabled: r.enabled,
         })));
       } else if (one.type === 'project') {
         const projs = await prisma.project.findMany({ where: { table_id: one.id, deleted_at: null } });
@@ -89,6 +95,10 @@ export default async function (app: FastifyInstance) {
     const people = await prisma.person.findMany({ where: { deleted_at: null } });
     const ledger = await prisma.pointsLedger.findMany({ orderBy: { created_at: 'asc' } });
     const history = await prisma.changeHistory.findMany({ orderBy: { created_at: 'desc' }, take: 5000 });
+    const reminders = await prisma.reminder.findMany({
+      where: { deleted_at: null },
+      orderBy: [{ table_id: 'asc' }, { sort_order: 'asc' }],
+    });
 
     const tMap = Object.fromEntries(tables.map((t) => [t.id, t.name]));
     const pMap = Object.fromEntries(people.map((p) => [p.id, p.name]));
@@ -107,8 +117,9 @@ export default async function (app: FastifyInstance) {
       { 项: '这个文件是什么', 说明: '「日志与项目管理」整库导出。每张工作表 → 一个 sheet，用 Excel 直接就能看。' },
       { 项: '想恢复数据怎么用', 说明: '程序里点「导入 Excel」选这个文件：合并导入=按内部 ID 覆盖同一条记录、不动其它；清空后导入=先清空再写入。导入前会自动备份当前库。' },
       { 项: '带「内部ID」的列是什么', 说明: '每条记录的内部编号（一串字母数字），导入时靠它对上号，日常不用看、也不要改。' },
-      { 项: 'sheet 对照', 说明: '说明 / 工作表目录 / 日志 / 待办 / 项目 / 项目任务 / 人员 / 积分流水 / 操作历史' },
+      { 项: 'sheet 对照', 说明: '说明 / 工作表目录 / 日志 / 待办 / 提醒 / 项目 / 项目任务 / 人员 / 积分流水 / 操作历史' },
       { 项: '「整库备份」是什么', 说明: '程序里点「整库备份」= 把数据库文件整份复制到 data\\backups\\，出问题可用它整库回滚。' },
+      { 项: '「提醒」是什么', 说明: '日志页格子里的「提前写好的文字」：支持只此一次 / 每周几 / 每月几号 / 每年几月几号，可限定生效的起止日期。' },
       { 项: '「操作记录」是什么', 说明: '每一次新增/修改/删除的流水账（时间、对象、改动内容），用于追溯谁在什么时候改了什么。' },
       { 项: '导出时间', 说明: todayStr() },
     ]);
@@ -126,6 +137,11 @@ export default async function (app: FastifyInstance) {
       title: t.title, assignee_id: t.assignee_id, assignee_name: pMap[t.assignee_id || ''] || '',
       points: t.points, status: t.status, record_time: t.record_time, completed_at: t.completed_at,
       transferred: t.transferred,
+    })));
+    add(SHEETS.reminders, reminders.map((r) => ({
+      id: r.id, table_id: r.table_id, table_name: tMap[r.table_id] || '',
+      text: r.text, repeat: r.repeat, rule: r.rule,
+      start_date: r.start_date, end_date: r.end_date, enabled: r.enabled,
     })));
     add(SHEETS.projects, projects.map((p) => ({
       id: p.id, table_id: p.table_id, table_name: tMap[p.table_id] || '',
@@ -190,6 +206,7 @@ export default async function (app: FastifyInstance) {
       await prisma.projectTask.deleteMany({});
       await prisma.project.deleteMany({});
       await prisma.todo.deleteMany({});
+      await prisma.reminder.deleteMany({});
       await prisma.logEntry.deleteMany({});
       await prisma.person.deleteMany({});
       await prisma.tableMeta.deleteMany({});
@@ -248,6 +265,25 @@ export default async function (app: FastifyInstance) {
         await prisma.todo.create({ data });
       }
       counts.todos = (counts.todos || 0) + 1;
+    }
+    // ④b 提醒（2026-10-08 新增；导入时按内部 ID 对上号）
+    for (const r of sheets[SHEETS.reminders] || []) {
+      if (!r.text || !r.table_id) continue;
+      const data: any = {
+        table_id: String(r.table_id),
+        text: String(r.text),
+        repeat: String(r.repeat || 'once'),
+        rule: typeof r.rule === 'string' ? r.rule : JSON.stringify(r.rule || {}),
+        start_date: P(r.start_date),
+        end_date: P(r.end_date),
+        enabled: !(r.enabled === false || r.enabled === 'false' || r.enabled === 0 || r.enabled === '0'),
+      };
+      if (r.id) {
+        await prisma.reminder.upsert({ where: { id: String(r.id) }, create: { id: String(r.id), ...data }, update: data });
+      } else {
+        await prisma.reminder.create({ data });
+      }
+      counts.reminders = (counts.reminders || 0) + 1;
     }
     // ⑤ 项目
     for (const r of sheets[SHEETS.projects] || []) {
@@ -334,9 +370,21 @@ export default async function (app: FastifyInstance) {
   });
 
   // ══ 手工备份数据库 ═════════════════════════════════════════
+  /**
+   * 2026-10-08 用户反馈：「点了整库备份应该是没什么反应，我不知道它备份到哪去了」。
+   * 原来只返回 { file }，前端也只弹一个 toast（在微信里/忙的时候很容易没看到）。
+   * 现在补上 dir（备份存放目录）与 count（现有份数），前端据此弹窗把「存到哪、存了哪些」直接摆出来。
+   */
   app.post('/api/backup', async () => {
     const p = await backupDbFile();
-    return { ok: true, file: path.basename(p) };
+    const dir = backupsDir();
+    let count = 0;
+    try {
+      count = fs.readdirSync(dir).filter((f) => f.endsWith('.db')).length;
+    } catch {
+      count = 0;
+    }
+    return { ok: true, file: path.basename(p), path: p, dir, count };
   });
 
   app.get('/api/backups', async () => {

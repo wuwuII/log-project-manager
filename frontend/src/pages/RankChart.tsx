@@ -38,6 +38,10 @@ interface DailyData {
   summary: {
     task_count: number;
     done_count: number;
+    /** 2026-10-08 新增：该人员被指派的待办计数（老后端可能没有 → 用 ?? 0 兜） */
+    todo_count?: number;
+    todo_pending?: number;
+    todo_done?: number;
     avg_daily_expected: number;
     total_expected_this_month: number;
     avg_daily_actual: number;
@@ -344,6 +348,15 @@ const RankChart: React.FC<Props> = ({ people, selectedPersonId, onSelectPerson, 
         <div className="lpm-stat-card">
           <span className="k">已完成</span>
           <span className="v">{s.done_count}</span>
+        </div>
+        {/* 2026-10-08 新增：待办也算这个人的活（未完成 / 已完成） */}
+        <div className="lpm-stat-card">
+          <span className="k">待办(未完/已完)</span>
+          <span className="v">
+            {s.todo_pending ?? 0}
+            <span className="u">/</span>
+            {s.todo_done ?? 0}
+          </span>
         </div>
         <div className="lpm-stat-card">
           <span className="k">日均（实际）</span>

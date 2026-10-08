@@ -168,6 +168,39 @@ export default async function (app: FastifyInstance) {
       });
     }
 
+    /**
+     * 2026-10-08 用户要求：已完成的待办被改了「点数」或「负责人」时，账要跟着走。
+     * 流水是唯一真相 —— 不能出现「待办写着 5 分、账上还挂着 10 分」或「人换了分没换」。
+     * 做法：冲旧记新（先把改动前的分从原负责人账上扣掉，再按改动后的记到新负责人账上）。
+     * 本分支只在「完成 → 仍然完成」时走；完成 / 取消完成那两种情况上面已处理过。
+     */
+    if (!goingDone && !goingBack && before.status === 'done' && after.status === 'done') {
+      const oldP = before.points || 0;
+      const newP = after.points || 0;
+      const oldA = before.assignee_id;
+      const newA = after.assignee_id;
+      if (oldP !== newP || oldA !== newA) {
+        if (oldA && oldP) {
+          await addPoints({
+            person_id: oldA,
+            points: -oldP,
+            source_type: 'todo',
+            source_id: after.id,
+            reason: `修改已完成待办·冲回：${before.title}`,
+          });
+        }
+        if (newA && newP) {
+          await addPoints({
+            person_id: newA,
+            points: newP,
+            source_type: 'todo',
+            source_id: after.id,
+            reason: `修改已完成待办·重记：${after.title}`,
+          });
+        }
+      }
+    }
+
     await logChange({
       table_id: after.table_id,
       record_id: after.id,
@@ -193,11 +226,34 @@ export default async function (app: FastifyInstance) {
     return { ok: true, count: ids.length };
   });
 
+  /**
+   * 删除待办（软删除）
+   * 2026-10-08 用户要求（原话）：「如果我删除了这个待办事项，那么对应的这个工作就已经是没有积分的」
+   *   → 已「完成」且已经记过分的待办，删除时把那份积分从负责人账上冲回（写一条负流水）。
+   *      未完成的待办本来就没记过分，无需处理。
+   * 注意：「待办 → 转项目计划」后项目任务那套积分是独立的，删待办不影响它（用户已确认两套独立）。
+   */
   app.delete('/api/todos/:id', async (req) => {
     const { id } = req.params as any;
     const before = await prisma.todo.findUnique({ where: { id } });
+    if (!before) return { ok: true };
+    if (before.deleted_at) return { ok: true, already: true };
+
     await prisma.todo.update({ where: { id }, data: { deleted_at: new Date() } });
-    await logChange({ table_id: before?.table_id, record_id: id, entity: 'todo', action: 'delete', before });
-    return { ok: true };
+
+    let revoked = 0;
+    if (before.status === 'done' && before.assignee_id && before.points) {
+      revoked = before.points;
+      await addPoints({
+        person_id: before.assignee_id,
+        points: -before.points,
+        source_type: 'todo',
+        source_id: before.id,
+        reason: `删除已完成的待办·冲回：${before.title}`,
+      });
+    }
+
+    await logChange({ table_id: before.table_id, record_id: id, entity: 'todo', action: 'delete', before });
+    return { ok: true, revoked_points: revoked };
   });
 }

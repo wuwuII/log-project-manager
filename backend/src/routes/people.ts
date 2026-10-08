@@ -133,6 +133,42 @@ export default async function (app: FastifyInstance) {
       }
     }
 
+    // ── 1b. expected：该人的「待办」（2026-10-08 用户要求：待办也要算进工作量）──
+    //   口径（用户拍板）：
+    //     · 未完成的待办 → 按「建立那天（record_time）」算一天的活
+    //     · 已完成的待办 → 按「完成那天（completed_at）」算一天的活
+    //   ⚠️ 待办与项目任务是两套独立的账（用户原话：「我一般把这个转到计划了，这个就会删掉」）；
+    //      勾选✔完成后积分给被指派的人，删除该待办则冲回（见 routes/todos.ts）。
+    const todoWhere: any = { assignee_id: person_id, deleted_at: null };
+    if (project_ids) {
+      const ids = String(project_ids).split(',').filter(Boolean);
+      if (ids.length) todoWhere.linked_project_id = { in: ids };
+    }
+    const todoRows = await prisma.todo.findMany({
+      where: todoWhere,
+      orderBy: [{ record_time: 'asc' }],
+    });
+
+    for (const td of todoRows) {
+      const key = 'D:' + td.id;
+      const isDone = td.status === 'done';
+      const base = isDone ? td.completed_at || td.record_time : td.record_time;
+      const ds = ymd(new Date(base as any));
+      taskMap[key] = {
+        title: td.title,
+        color: colorOf(key),
+        kind: 'todo',
+        project_id: null,
+        project_name: '待办',
+        total_points: td.points || 0,
+        progress: isDone ? 100 : 0,
+        done: isDone,
+        date: ds,
+      };
+      if (!expectedMap[ds]) expectedMap[ds] = [];
+      expectedMap[ds].push({ key, title: td.title, points: td.points || 0 });
+    }
+
     // ── 2. actual：该人的积分流水 ──
     // 照任务公会做法：把每个「来源」的流水按时间区间**均摊到每一天**，
     // 这样图上看到的是"每天承接/挣到的工作量"，而不是记账当天的孤立尖峰。
@@ -237,6 +273,10 @@ export default async function (app: FastifyInstance) {
       summary: {
         task_count: tasks.length,
         done_count: tasks.filter((t) => t.status === 'done').length,
+        // 2026-10-08 新增：待办计数（用户要求「待办也要在人员工作量里体现」）
+        todo_count: todoRows.length,
+        todo_pending: todoRows.filter((t) => t.status !== 'done').length,
+        todo_done: todoRows.filter((t) => t.status === 'done').length,
         avg_daily_expected: avg(expAll),
         total_expected_this_month: round2(
           Object.entries(expectedMap).filter(([d]) => d.startsWith(thisMonth)).flatMap(([, v]) => v).reduce((s, x) => s + x.points, 0)
