@@ -45,7 +45,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
  * ⚠️ 每次出构建记得同步改这里。
  */
 const BUILD_TAG =
-  '构建 V33 · 10-08 日志提醒（单日/每周/每月/每年）+ 待办计入人员工作量 + 积分随待办变动 + 备份可见';
+  '构建 V35 · 10-08 人员页：记住所选人员 + 记住所看时间段（可任意前后翻，含无安排的时段）+ 分组显示计划表名';
 
 const App: React.FC = () => {
   React.useEffect(() => {

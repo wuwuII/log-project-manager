@@ -23,8 +23,52 @@ const PeopleStats: React.FC<Props> = ({ people, reloadPeople }) => {
   const [tab, setTab] = useState('chart');
 
   // ── 工作量图状态 ──
-  const [selectedPersonId, setSelectedPersonId] = useState('');
-  const [windowDays, setWindowDays] = useState(14);
+  /**
+   * 2026-10-08 用户反馈修：「每次切回来，人员工作量选的不是我最后一次选的那个人，会默认换成默认名字」。
+   * 原因：selectedPersonId 只存在内存 state 里，切走再切回组件重建 → 归零 →
+   * loadSummary 里「不在列表就选第一个人」的兜底把选择顶掉了。
+   * 修法：把「最后一次选的人」落到 localStorage，下次进来自动恢复（那个人被删了才退回第一个）。
+   */
+  const SEL_KEY = 'lpm.people.selectedPerson';
+  const readSel = () => {
+    try {
+      return localStorage.getItem(SEL_KEY) || '';
+    } catch {
+      return '';
+    }
+  };
+  const [selectedPersonId, setSelectedPersonId] = useState<string>(readSel);
+  /**
+   * 窗口大小也记住（用户 2026-10-08 追加：「我选了哪 14 天，切回来还应该是那一段」）。
+   * 与 RankChart 里的「窗口起始日」一起，构成「上次看的到底是哪一段」。
+   */
+  const WD_KEY = 'lpm.people.windowDays';
+  const readWD = () => {
+    try {
+      const v = Number(localStorage.getItem(WD_KEY));
+      return v === 14 || v === 30 || v === 90 || v === 180 ? v : 14;
+    } catch {
+      return 14;
+    }
+  };
+  const [windowDays, setWindowDays] = useState<number>(readWD);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WD_KEY, String(windowDays));
+    } catch {
+      /* ignore */
+    }
+  }, [windowDays]);
+
+  // 选择变化 → 立刻落盘（下次进来恢复）
+  useEffect(() => {
+    try {
+      if (selectedPersonId) localStorage.setItem(SEL_KEY, selectedPersonId);
+    } catch {
+      /* 隐私模式等写不了就算了，不影响功能 */
+    }
+  }, [selectedPersonId]);
   /** 项目筛选（2026-10-03：原来这个下拉是 disabled 的灰框，用户以为坏了） */
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [projectIds, setProjectIds] = useState<string[]>([]);
@@ -51,6 +95,9 @@ const PeopleStats: React.FC<Props> = ({ people, reloadPeople }) => {
       // 默认选中第一个人（用户说"只显示一个人"也要正确）
       setSelectedPersonId((cur) => {
         if (cur && items.some((x) => x.person_id === cur)) return cur;
+        // 2026-10-08：内存里没有（刚切回来）→ 用「上次选的人」；连他也不在列表才退回第一个
+        const saved = readSel();
+        if (saved && items.some((x) => x.person_id === saved)) return saved;
         return items.length ? items[0].person_id : '';
       });
     } catch (e: any) {

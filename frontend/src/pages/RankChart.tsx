@@ -15,6 +15,9 @@ const PALETTE = [
   '#ffd8b1', '#000075', '#e6beff', '#ffb469', '#8a2be2',
 ];
 
+/** localStorage 键：窗口起始日（2026-10-08 加，记住「上次看的是哪一段」）*/
+const WIN_KEY = 'lpm.people.windowStart';
+
 interface DayCell {
   key: string;
   title: string;
@@ -30,9 +33,32 @@ interface TaskMapItem {
   kind: string;
   project_id: string | null;
   project_name: string;
+  /** 所属计划表（工作表）名 —— 2026-10-08 新增，分组标签优先用它 */
+  table_name?: string;
   total_points?: number;
   progress?: number;
 }
+
+/**
+ * 分组标签（2026-10-08 用户反馈修）：
+ *   原来直接用 project_name，于是图上显示的是每个项目表自带的「默认项目」，
+ *   用户认不出是哪个计划（他要的是「26b515 计划表」这种名字）。
+ *   规则：
+ *     · 一个计划表里只有一个项目 → 直接用**计划表名**
+ *     · 一个计划表里塞了多个项目 → 「计划表名·项目名」（不丢信息）
+ *     · 待办 / 手工调整这类没有计划表的 → 保持原样
+ */
+const groupLabelOf = (taskMap: Record<string, TaskMapItem>, info: TaskMapItem): string => {
+  const tn = (info.table_name || '').trim();
+  const pn = (info.project_name || '其他').trim();
+  if (!tn) return pn;
+  if (tn === pn) return tn;
+  const seen = new Set<string>();
+  Object.values(taskMap).forEach((x) => {
+    if ((x.table_name || '').trim() === tn) seen.add((x.project_name || '').trim());
+  });
+  return seen.size > 1 ? `${tn}·${pn}` : tn;
+};
 interface DailyData {
   person: { id: string; name: string; role?: string | null; color?: string | null } | null;
   summary: {
@@ -102,12 +128,12 @@ const buildOption = (
 ) => {
   if (!data.length) return {};
 
-  // 按「项目」分组收集 key（保持出现顺序）
+  // 按「计划表（没有计划表的按项目）」分组收集 key（保持出现顺序）
   const groups: { name: string; keys: string[] }[] = [];
   const seen = new Set<string>();
   for (const k of Object.keys(taskMap)) {
     const info = taskMap[k];
-    const gn = info.project_name || '其他';
+    const gn = groupLabelOf(taskMap, info);
     if (!seen.has(gn)) {
       seen.add(gn);
       groups.push({ name: gn, keys: [] });
@@ -180,7 +206,7 @@ const buildOption = (
         for (const p of params) {
           if (p.value <= 0) continue;
           const info = Object.values(taskMap).find((t) => t.title === p.seriesName);
-          const gn = info?.project_name || '其他';
+          const gn = info ? groupLabelOf(taskMap, info) : '其他';
           if (!grouped[gn]) {
             grouped[gn] = [];
             order.push(gn);
@@ -219,12 +245,12 @@ const GroupLegend: React.FC<{ taskMap: Record<string, TaskMapItem> }> = ({ taskM
   const order: string[] = [];
   for (const k of keys) {
     const info = taskMap[k];
-    const gid = info.project_id || info.project_name || '_';
-    if (!groups[gid]) {
-      groups[gid] = { name: info.project_name || '其他', items: [] };
-      order.push(gid);
+    const label = groupLabelOf(taskMap, info);
+    if (!groups[label]) {
+      groups[label] = { name: label, items: [] };
+      order.push(label);
     }
-    groups[gid].items.push({ k, title: info.title, color: info.color });
+    groups[label].items.push({ k, title: info.title, color: info.color });
   }
   const single = order.length === 1;
   return (
@@ -273,8 +299,33 @@ interface Props {
 const RankChart: React.FC<Props> = ({ people, selectedPersonId, onSelectPerson, windowDays, onWindowDays, projectIds }) => {
   const [data, setData] = useState<DailyData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [offset, setOffset] = useState(0);
-  const [inited, setInited] = useState(false);
+  /**
+   * 时间窗（2026-10-08 用户反馈修）：
+   *   「我的计划已经排到 10 月 20 号，但我没办法往后切去看 10/20 的东西，只能往前切；
+   *     我应该可以看任意一个时间段的人员得分，哪怕这段时间里这个人没有安排。」
+   * 原实现把时间轴绑死在数据上（virtualTotal = 数据天数 + 窗口，窗口末尾 = 数据末日），
+   * 数据不到那天就翻不过去。现在改成**按日期自由定位**：
+   *   anchor = 窗口起始日（YYYY-MM-DD，'' = 还没定，默认把今天居中）
+   *   与数据无关，越界的日子由 mapDataToRange 补 0。
+   */
+  const [anchor, setAnchor] = useState<string>(() => {
+    /**
+     * 追加要求（用户 2026-10-08）：「我当前选的那 14 天，切回来还应该是这一段，不应该变掉」。
+     * → 窗口起始日也落到 localStorage，进来自动恢复。
+     */
+    try {
+      return localStorage.getItem(WIN_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+  useEffect(() => {
+    try {
+      if (anchor) localStorage.setItem(WIN_KEY, anchor);
+    } catch {
+      /* 写不了就算了 */
+    }
+  }, [anchor]);
 
   useEffect(() => {
     if (!selectedPersonId) {
@@ -288,52 +339,46 @@ const RankChart: React.FC<Props> = ({ people, selectedPersonId, onSelectPerson, 
       .get('/points/daily', { params })
       .then((r) => {
         setData(r.data);
-        setInited(false);
       })
       .catch(() => setData(null))
       .finally(() => setLoading(false));
   }, [selectedPersonId, projectIds]);
 
-  const dataDays = data?.expected?.length || 0;
-  const lastDate = dataDays > 0 ? data!.expected[dataDays - 1].date : '';
-  const today = data?.today || '';
-  const virtualTotal = useMemo(() => (dataDays === 0 ? windowDays : dataDays + windowDays), [dataDays, windowDays]);
+  const today = data?.today || fmtLocal(new Date());
+  /** 按天数平移日期字符串（不用 toISOString，避免时区差一天） */
+  const shiftDate = (d: string, n: number) => {
+    const t = new Date(d + 'T00:00:00');
+    t.setDate(t.getDate() + n);
+    return fmtLocal(t);
+  };
+  /** 让 center 落在窗口中间 → 返回窗口起始日 */
+  const centerStart = (center: string, days: number) => shiftDate(center, -Math.floor(days / 2));
 
-  const { fullExpected, actualPadded, todayIndex } = useMemo(() => {
-    if (dataDays === 0 || !lastDate) return { fullExpected: [] as DayEntry[], actualPadded: [] as DayEntry[], todayIndex: -1 };
-    const lastD = new Date(lastDate + 'T00:00:00');
-    const startD = new Date(lastD);
-    startD.setDate(startD.getDate() - virtualTotal + 1);
-    const range = genDateRange(startD, virtualTotal);
-    return {
-      fullExpected: mapDataToRange(data!.expected, range),
-      actualPadded: mapDataToRange(data!.actual || [], range),
-      todayIndex: range.indexOf(today),
-    };
-  }, [dataDays, lastDate, virtualTotal, today, data]);
+  const winStart = anchor || centerStart(today, windowDays);
+  const range = useMemo(() => genDateRange(new Date(winStart + 'T00:00:00'), windowDays), [winStart, windowDays]);
+  /** 与数据无关：越界的日子补空 —— 这就是「没有安排的时间段也能看」的关键 */
+  const expSlice = useMemo(() => mapDataToRange(data?.expected || [], range), [data, range]);
+  const actSlice = useMemo(() => mapDataToRange(data?.actual || [], range), [data, range]);
+  const winTotal = useMemo(
+    () => expSlice.reduce((acc, d) => acc + (d.tasks || []).reduce((a, t) => a + (t.points || 0), 0), 0),
+    [expSlice],
+  );
 
-  const maxOffset = Math.max(0, virtualTotal - windowDays);
-  const defaultOffset = useMemo(() => {
-    if (todayIndex < 0) return maxOffset;
-    return Math.max(0, Math.min(maxOffset, Math.floor(todayIndex - windowDays / 2)));
-  }, [todayIndex, windowDays, maxOffset]);
+  /** 一页 = 半个窗口（相邻两页有重叠，不会漏看）；自由前后翻，不再受数据边界限制 */
+  const step = Math.max(1, Math.floor(windowDays / 2));
+  const changeWindow = (d: number) => {
+    const c = shiftDate(winStart, Math.floor(windowDays / 2)); // 换窗口大小时保持「中心日」不动
+    onWindowDays(d);
+    setAnchor(centerStart(c, d));
+  };
 
-  useEffect(() => {
-    if (!inited && dataDays > 0) {
-      setOffset(defaultOffset);
-      setInited(true);
-    }
-  }, [defaultOffset, inited, dataDays]);
-
-  if (loading) return <Spin style={{ display: 'block', padding: 40 }} />;
-  if (!selectedPersonId) return <Empty description="请先选择人员" style={{ padding: 40 }} />;
-  if (!data || dataDays === 0) return <Empty description="该人员暂无任务与积分记录" style={{ padding: 40 }} />;
-
-  const step = Math.max(1, Math.floor(windowDays / 3));
-  const expSlice = fullExpected.slice(offset, offset + windowDays);
-  const actSlice = actualPadded.slice(offset, offset + windowDays);
   const maxY = calcMaxY(expSlice, actSlice);
-  const rangeText = expSlice.length ? `${expSlice[0].date.substring(5)} ~ ${expSlice[expSlice.length - 1].date.substring(5)}` : '';
+  const rangeText = range.length ? `${range[0]} ~ ${range[range.length - 1]}` : '';
+
+  if (loading && !data) return <Spin style={{ display: 'block', padding: 40 }} />;
+  if (!selectedPersonId) return <Empty description="请先选择人员" style={{ padding: 40 }} />;
+  if (!data) return <Empty description="该人员暂无数据" style={{ padding: 40 }} />;
+
   const s = data.summary;
 
   return (
@@ -381,18 +426,22 @@ const RankChart: React.FC<Props> = ({ people, selectedPersonId, onSelectPerson, 
         </div>
       </div>
 
-      {/* 时间窗口 + 平移 */}
+      {/* 时间窗口：自由前后翻 + 回到今天 + 跳到任意日期（2026-10-08 用户反馈修）*/}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-        <Button size="small" icon={<LeftOutlined />} disabled={offset <= 0} onClick={() => setOffset(Math.max(0, offset - step))} />
+        <Button size="small" icon={<LeftOutlined />} title="往前一页（更早）" onClick={() => setAnchor(shiftDate(winStart, -step))} />
+        <Button size="small" title="回到今天（窗口以今天居中）" onClick={() => setAnchor(centerStart(today, windowDays))}>
+          今天
+        </Button>
         <Select
           size="small"
           value={windowDays}
-          onChange={onWindowDays}
+          onChange={changeWindow}
           style={{ width: 88 }}
           options={[
             { value: 14, label: '14天' },
             { value: 30, label: '30天' },
             { value: 90, label: '3个月' },
+            { value: 180, label: '半年' },
           ]}
         />
         <Select
@@ -402,9 +451,21 @@ const RankChart: React.FC<Props> = ({ people, selectedPersonId, onSelectPerson, 
           onChange={onSelectPerson}
           options={people.map((p) => ({ value: p.id, label: p.name }))}
         />
-        <Button size="small" icon={<RightOutlined />} disabled={offset >= maxOffset} onClick={() => setOffset(Math.min(maxOffset, offset + step))} />
+        <Button size="small" icon={<RightOutlined />} title="往后一页（更晚）" onClick={() => setAnchor(shiftDate(winStart, step))} />
+        <input
+          type="date"
+          className="lpm-jump-date"
+          value={winStart}
+          title="跳到某个日期（窗口从这天开始）"
+          onChange={(e) => e.target.value && setAnchor(e.target.value)}
+        />
         <Text type="secondary" style={{ fontSize: 11 }}>{rangeText}</Text>
       </div>
+      {winTotal === 0 && (
+        <div className="lpm-pw-hint">
+          这段时间该人员没有安排（空白是正常的），可以继续往后 / 往前翻看别的时段。
+        </div>
+      )}
 
       {/* 两张图：计划得到的 / 已经得到的 */}
       <ReactECharts

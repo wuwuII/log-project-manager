@@ -98,6 +98,19 @@ export default async function (app: FastifyInstance) {
     const projName: Record<string, string> = {};
     projects.forEach((p) => { projName[p.id] = p.name; });
 
+    /**
+     * 2026-10-08 用户反馈：「人员工作量上面显示的是『默认项目』，而不是我这个 26b515 计划表里的，
+     * 按理说应该显示 26b515 这个计划才对」。
+     * 根因：新建项目类型工作表时，系统会自带建一个名为「默认项目」的项目（见 workspace.ts
+     * ensureDefaultTables）→ 图上分组拿到的是这个默认项目名，用户认不出来。
+     * 所以这里额外把「所属计划表（工作表）名」也带给前端，前端优先用它做分组标签。
+     */
+    const tableRows = await prisma.tableMeta.findMany({ where: { deleted_at: null } });
+    const tableName: Record<string, string> = {};
+    tableRows.forEach((t) => { tableName[t.id] = t.name; });
+    const projTableName: Record<string, string> = {}; // project_id → 所属工作表名
+    projects.forEach((p) => { projTableName[p.id] = tableName[p.table_id] || ''; });
+
     const colorByKey: Record<string, string> = {};
     let colorSeq = 0;
     const colorOf = (key: string) => {
@@ -122,6 +135,8 @@ export default async function (app: FastifyInstance) {
         kind: 'task',
         project_id: t.project_id,
         project_name: projName[t.project_id] || '未命名项目',
+        /** 所属计划表（工作表）名 —— 前端分组标签优先用它（2026-10-08 用户反馈） */
+        table_name: projTableName[t.project_id] || '',
         total_points: t.points || 0,
         progress: t.progress || 0,
       };
