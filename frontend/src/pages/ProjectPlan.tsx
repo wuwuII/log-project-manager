@@ -107,6 +107,17 @@ function toSvarTasks(rows: ProjectTask[], pMap: Record<string, string>): ITask[]
 }
 
 /**
+ * 计划表（ProjectPlan）列宽的默认值 + localStorage 键
+ * 2026-10-08：原来这份默认值直接写在 useState 里（纯内存）→ 拖过的列宽一刷新就丢，挪到模块作用域以便持久化。
+ */
+const PP_DEFAULT_COL_W: Record<string, number> = {
+  drag: 34, name: 150, plan_start: 96, plan_duration: 56, plan_end: 96,
+  actual_start: 96, actual_end: 96, progress: 180, assignee_id: 84,
+  points: 56, earned_points: 62, status: 76, op: 92,
+};
+const PP_COLW_KEY = 'lpm_pp_colw';
+
+/**
  * 可拖动列宽的表头单元格（自写，不引第三方库）
  * ⚠️ 列宽写死在各列 width 上，**不随容器/页面宽度自动变化** ——
  *    表格总宽超出左边区域时由底部横滚条滚动（用户 2026-10-03 明确要求）。
@@ -170,12 +181,33 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
    * 🔴 每列都必须有**显式** width：以前「任务名称」列不设宽度 → AntD 让它吃剩余空间，
    *    于是窗口一宽列就变宽、一窄就变窄（用户 2026-10-03：「列宽是随着页面占比变化的，不合适」）。
    *    现在全部写死 + 表头可拖；总宽超出左边区域就用底部横滚条滚。
+   * 🔴 2026-10-08 用户反馈修：「我调了任务名称 / 人员这些列的宽度，一刷新就变回默认了」。
+   *    原来 colW 是纯内存 state（初值写死）→ 刷新 / 切表即丢；
+   *    现在初值从 localStorage 读（与默认值逐列合并，旧数据缺列也不会崩），变化即写回。
    */
-  const [colW, setColW] = useState<Record<string, number>>({
-    drag: 34, name: 150, plan_start: 96, plan_duration: 56, plan_end: 96,
-    actual_start: 96, actual_end: 96, progress: 180, assignee_id: 84,
-    points: 56, earned_points: 62, status: 76, op: 92,
+  const [colW, setColW] = useState<Record<string, number>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PP_COLW_KEY) || '{}');
+      if (saved && typeof saved === 'object') {
+        const merged: Record<string, number> = { ...PP_DEFAULT_COL_W };
+        Object.keys(PP_DEFAULT_COL_W).forEach((k) => {
+          const v = Number((saved as any)[k]);
+          if (Number.isFinite(v) && v >= 48) merged[k] = v;
+        });
+        return merged;
+      }
+    } catch {
+      /* 存档坏了就用默认值 */
+    }
+    return { ...PP_DEFAULT_COL_W };
   });
+  useEffect(() => {
+    try {
+      localStorage.setItem(PP_COLW_KEY, JSON.stringify(colW));
+    } catch {
+      /* 写不了就算了，不影响功能 */
+    }
+  }, [colW]);
   const onResizeCol = useCallback((key: string, w: number) => {
     setColW((p) => ({ ...p, [key]: Math.max(48, Math.round(w)) }));
   }, []);
