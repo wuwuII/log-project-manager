@@ -145,7 +145,7 @@ npm install
 npm run build               # vite → dist/
 
 # ── 启动（回到仓库根目录）──
-node "_无窗口启动.js"        # 或双击「启动.bat」（Windows）
+node "_lpm_start.js"        # 或双击「启动.bat」（Windows）
 # 浏览器打开 http://localhost:5174
 ```
 
@@ -176,11 +176,11 @@ cd frontend && npm run dev           # http://localhost:5174
 
 | 文件 | 平台 | 作用 |
 |---|---|---|
-| `启动.bat` | Windows | 找 Node（先找便携运行时 `node\node.exe`，找不到用系统装的）→ 交给 `_无窗口启动.js` → 起服务并自动开浏览器 → 校验 5174 是否真的在监听，没起来就提示看日志 |
+| `启动.bat` | Windows | 找 Node（先找便携运行时 `node\node.exe`，找不到用系统装的）→ 交给 `_lpm_start.js` → 起服务并自动开浏览器 → 校验 5174 是否真的在监听，没起来就提示看日志。**这个文件是纯 ASCII + CRLF：中文 Windows 的 cmd 按 GBK 读批处理，文件里只要有 UTF-8 中文就会整份解析失败**（报一串 "'xxx' 不是内部或外部命令"）|
 | `停止.bat` | Windows | 只结束占用 `3000` / `5174` 端口的进程，**不动你机器上其它 node 程序** |
-| `_无窗口启动.js` | 跨平台 | 用 `detached` 起后端 ⇒ **没有黑窗口**；已在运行则不重复启动、只开页面；关网页 90 秒后自动退出 |
+| `_lpm_start.js` | 跨平台 | 用 `detached` 起后端 ⇒ **没有黑窗口**；已在运行则不重复启动、只开页面；关网页 90 秒后自动退出 |
 
-> `_无窗口启动.js` 也直接用 `node "_无窗口启动.js"` 跑（Linux/macOS 用这条）。
+> `_lpm_start.js` 也直接用 `node "_lpm_start.js"` 跑（Linux/macOS 用这条）。
 > 脚本里的提示文字是 ASCII 英文，是为了避免 `cmd.exe` 读 UTF-8 中文 batch 出现乱码 —— 中文文档看这份 README。
 
 ---
@@ -207,7 +207,7 @@ data/backups/          ← 点「备份」生成的副本，自动保留最近 2
 ```text
 lpm/
 ├── 启动.bat / 停止.bat        # Windows 一键启动 / 停止
-├── _无窗口启动.js             # 无窗口启动器（跨平台）
+├── _lpm_start.js             # 无窗口启动器（跨平台）
 ├── node/node.exe              # 便携 Node 运行时（目标电脑不用装 Node）
 ├── data/app.db                # 数据库（自带一份演示库）
 ├── backend/
@@ -245,7 +245,7 @@ lpm/
 ## 跨平台说明
 
 - **后端 / 前端源码是跨平台的**：没有写死的 `C:\` 路径，全部走 `path.join`；数据库是 SQLite 文件
-- **`启动.bat` / `停止.bat` 是 Windows 专用的**（`taskkill` / `netstat`）；Linux/macOS 直接用 `node "_无窗口启动.js"` 启动、`kill` 对应端口停止
+- **`启动.bat` / `停止.bat` 是 Windows 专用的**（`taskkill` / `netstat`）；Linux/macOS 直接用 `node "_lpm_start.js"` 启动、`kill` 对应端口停止
 - **`node_modules` 不能跨系统复制**：Prisma 的查询引擎按平台下载（schema 里声明了 `binaryTargets = ["native", "windows"]`），换系统后重新 `npm install` 即可，源码不用改
 - 便携 Node 运行时（`node/`）也是分平台的：Windows 是 `node.exe`，其它系统放 `node/node`
 
