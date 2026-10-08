@@ -6,10 +6,10 @@ data/
 *.db-shm
 *.bak
 
-# ── 依赖与构建产物 ──
+# ── 依赖（node_modules 不入库；要「双击即用」请下载 Releases 里的离线包）──
 node_modules/
-dist/
 build/
+# 注：dist/ 现在入库了 —— 仓库里直接带编译产物，clone 下来不必自己编译
 
 # ── 便携 Node 运行时（体积大，不进仓库；需要离线包的人自己放）──
 node/

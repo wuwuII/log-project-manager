@@ -1,0 +1,408 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = default_1;
+const zod_1 = require("zod");
+const prisma_1 = __importDefault(require("../lib/prisma"));
+const history_1 = require("../lib/history");
+const date_1 = require("../lib/date");
+/** 20 色高对比调色板（照抄任务公会 Ranking.tsx 的 PALETTE） */
+const PALETTE = [
+    '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4',
+    '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990',
+    '#dcbeff', '#9a6324', '#800000', '#aaffc3', '#808000',
+    '#ffd8b1', '#000075', '#e6beff', '#ffb469', '#8a2be2',
+];
+const round2 = (n) => Math.round(n * 100) / 100;
+async function default_1(app) {
+    // ── 人员列表 ──────────────────────────────────────────────
+    app.get('/api/people', async () => {
+        const people = await prisma_1.default.person.findMany({
+            where: { deleted_at: null },
+            orderBy: [{ created_at: 'asc' }],
+        });
+        return { people };
+    });
+    // ── 增加人员 ──────────────────────────────────────────────
+    app.post('/api/people', async (req, reply) => {
+        const schema = zod_1.z.object({
+            name: zod_1.z.string().min(1).max(50),
+            role: zod_1.z.string().max(50).nullish(),
+            color: zod_1.z.string().max(9).nullish(),
+        });
+        const parsed = schema.safeParse(req.body || {});
+        if (!parsed.success)
+            return reply.status(400).send({ error: '参数校验失败' });
+        const dup = await prisma_1.default.person.findFirst({
+            where: { name: parsed.data.name, deleted_at: null },
+        });
+        if (dup)
+            return reply.status(400).send({ error: '同名人员已存在' });
+        const p = await prisma_1.default.person.create({
+            data: { name: parsed.data.name, role: parsed.data.role ?? null, color: parsed.data.color ?? null },
+        });
+        await (0, history_1.logChange)({ record_id: p.id, entity: 'person', action: 'create', after: p });
+        return p;
+    });
+    // ── 编辑人员 ──────────────────────────────────────────────
+    app.patch('/api/people/:id', async (req, reply) => {
+        const { id } = req.params;
+        const schema = zod_1.z.object({
+            name: zod_1.z.string().min(1).max(50).optional(),
+            role: zod_1.z.string().max(50).nullish(),
+            color: zod_1.z.string().max(9).nullish(),
+        });
+        const parsed = schema.safeParse(req.body || {});
+        if (!parsed.success)
+            return reply.status(400).send({ error: '参数校验失败' });
+        const before = await prisma_1.default.person.findUnique({ where: { id } });
+        if (!before)
+            return reply.status(404).send({ error: '人员不存在' });
+        const after = await prisma_1.default.person.update({ where: { id }, data: parsed.data });
+        await (0, history_1.logChange)({ record_id: id, entity: 'person', action: 'update', before, after });
+        return after;
+    });
+    // ── 删除人员（软删除）─────────────────────────────────────
+    app.delete('/api/people/:id', async (req) => {
+        const { id } = req.params;
+        const before = await prisma_1.default.person.findUnique({ where: { id } });
+        await prisma_1.default.person.update({ where: { id }, data: { deleted_at: new Date() } });
+        await (0, history_1.logChange)({ record_id: id, entity: 'person', action: 'delete', before });
+        return { ok: true };
+    });
+    // ── 每日积分（人员工作量柱状图数据源）────────────────────────
+    // 照任务公会 /api/points/daily 的模型，映射到本项目：
+    //   expected（计划得到的）= 每个任务的 points 按 [plan_start, plan_end] 每天均摊
+    //   actual  （已经得到的）= points_ledger 流水，按发生当天记
+    //   每个「事项」一个固定颜色；按项目（=任务公会里的"团队"）分组
+    app.get('/api/points/daily', async (req, reply) => {
+        const { person_id, project_ids } = req.query;
+        if (!person_id)
+            return reply.status(400).send({ error: 'person_id 必填' });
+        const person = await prisma_1.default.person.findUnique({ where: { id: person_id } });
+        // ── 1. expected：该人的项目任务 ──
+        const taskWhere = { assignee_id: person_id, deleted_at: null };
+        if (project_ids) {
+            const ids = String(project_ids).split(',').filter(Boolean);
+            if (ids.length)
+                taskWhere.project_id = { in: ids };
+        }
+        const tasks = await prisma_1.default.projectTask.findMany({
+            where: taskWhere,
+            orderBy: [{ plan_start: 'asc' }],
+        });
+        const projects = await prisma_1.default.project.findMany({ where: { deleted_at: null } });
+        const projName = {};
+        projects.forEach((p) => { projName[p.id] = p.name; });
+        /**
+         * 2026-10-08 用户反馈：「人员工作量上面显示的是『默认项目』，而不是我这个 26b515 计划表里的，
+         * 按理说应该显示 26b515 这个计划才对」。
+         * 根因：新建项目类型工作表时，系统会自带建一个名为「默认项目」的项目（见 workspace.ts
+         * ensureDefaultTables）→ 图上分组拿到的是这个默认项目名，用户认不出来。
+         * 所以这里额外把「所属计划表（工作表）名」也带给前端，前端优先用它做分组标签。
+         */
+        const tableRows = await prisma_1.default.tableMeta.findMany({ where: { deleted_at: null } });
+        const tableName = {};
+        tableRows.forEach((t) => { tableName[t.id] = t.name; });
+        const projTableName = {}; // project_id → 所属工作表名
+        projects.forEach((p) => { projTableName[p.id] = tableName[p.table_id] || ''; });
+        const colorByKey = {};
+        let colorSeq = 0;
+        const colorOf = (key) => {
+            if (!colorByKey[key]) {
+                colorByKey[key] = PALETTE[colorSeq % PALETTE.length];
+                colorSeq += 1;
+            }
+            return colorByKey[key];
+        };
+        const taskMap = {};
+        const expectedMap = {};
+        for (const t of tasks) {
+            if (!t.plan_start)
+                continue;
+            const key = 'T:' + t.id;
+            const dur = Math.max(1, t.plan_duration || 1);
+            const perDay = round2((t.points || 0) / dur);
+            taskMap[key] = {
+                title: t.name,
+                color: colorOf(key),
+                kind: 'task',
+                project_id: t.project_id,
+                project_name: projName[t.project_id] || '未命名项目',
+                /** 所属计划表（工作表）名 —— 前端分组标签优先用它（2026-10-08 用户反馈） */
+                table_name: projTableName[t.project_id] || '',
+                total_points: t.points || 0,
+                progress: t.progress || 0,
+            };
+            for (let i = 0; i < dur; i++) {
+                const ds = (0, date_1.addDays)(t.plan_start, i);
+                if (!ds)
+                    continue;
+                if (!expectedMap[ds])
+                    expectedMap[ds] = [];
+                expectedMap[ds].push({ key, title: t.name, points: perDay });
+            }
+        }
+        // ── 1b. expected：该人的「待办」（2026-10-08 用户要求：待办也要算进工作量）──
+        //   口径（用户拍板）：
+        //     · 未完成的待办 → 按「建立那天（record_time）」算一天的活
+        //     · 已完成的待办 → 按「完成那天（completed_at）」算一天的活
+        //   ⚠️ 待办与项目任务是两套独立的账（用户原话：「我一般把这个转到计划了，这个就会删掉」）；
+        //      勾选✔完成后积分给被指派的人，删除该待办则冲回（见 routes/todos.ts）。
+        const todoWhere = { assignee_id: person_id, deleted_at: null };
+        if (project_ids) {
+            const ids = String(project_ids).split(',').filter(Boolean);
+            if (ids.length)
+                todoWhere.linked_project_id = { in: ids };
+        }
+        const todoRows = await prisma_1.default.todo.findMany({
+            where: todoWhere,
+            orderBy: [{ record_time: 'asc' }],
+        });
+        for (const td of todoRows) {
+            const key = 'D:' + td.id;
+            const isDone = td.status === 'done';
+            const base = isDone ? td.completed_at || td.record_time : td.record_time;
+            const ds = (0, date_1.ymd)(new Date(base));
+            taskMap[key] = {
+                title: td.title,
+                color: colorOf(key),
+                kind: 'todo',
+                project_id: null,
+                project_name: '待办',
+                total_points: td.points || 0,
+                progress: isDone ? 100 : 0,
+                done: isDone,
+                date: ds,
+            };
+            if (!expectedMap[ds])
+                expectedMap[ds] = [];
+            expectedMap[ds].push({ key, title: td.title, points: td.points || 0 });
+        }
+        // ── 2. actual：该人的积分流水 ──
+        // 照任务公会做法：把每个「来源」的流水按时间区间**均摊到每一天**，
+        // 这样图上看到的是"每天承接/挣到的工作量"，而不是记账当天的孤立尖峰。
+        const ledger = await prisma_1.default.pointsLedger.findMany({
+            where: { person_id },
+            orderBy: { created_at: 'asc' },
+        });
+        const srcKeyOf = (l) => {
+            if (l.source_id) {
+                return (l.source_type === 'project_task' ? 'T:' : l.source_type === 'todo' ? 'D:' : 'X:') + l.source_id;
+            }
+            return 'M:' + (l.source_type || 'manual');
+        };
+        const actualMap = {};
+        const addActual = (ds, key, pts) => {
+            if (!actualMap[ds])
+                actualMap[ds] = [];
+            actualMap[ds].push({ key, title: taskMap[key]?.title || '', points: round2(pts) });
+        };
+        // 按来源分组
+        const bySource = {};
+        for (const l of ledger) {
+            if (!l.points)
+                continue;
+            const key = srcKeyOf(l);
+            if (!taskMap[key]) {
+                taskMap[key] = {
+                    title: l.reason || (l.source_type === 'manual' ? '手工调整' : l.source_type || '其他'),
+                    color: colorOf(key),
+                    kind: l.source_type || 'other',
+                    project_id: null,
+                    project_name: l.source_type === 'todo' ? '待办' : l.source_type === 'manual' ? '手工调整' : '其他',
+                };
+            }
+            if (!bySource[key])
+                bySource[key] = [];
+            bySource[key].push(l);
+        }
+        const midnight = (s) => new Date(s + 'T00:00:00');
+        for (const key of Object.keys(bySource)) {
+            const rows = bySource[key].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+            // 起始日：任务优先用它的计划开始日；但若计划开始日**晚于**第一条流水日
+            // （数据不一致：还没开工就记了分），必须取较早者，否则均摊区间落到未来、
+            // 这部分分会凭空丢失（真踩过：接口开发 16 分没进 actual）。
+            let prevDate = (0, date_1.ymd)(new Date(rows[0].created_at));
+            const tk = tasks.find((x) => 'T:' + x.id === key);
+            if (tk?.plan_start && tk.plan_start < prevDate)
+                prevDate = tk.plan_start;
+            for (const l of rows) {
+                const currDate = (0, date_1.ymd)(new Date(l.created_at));
+                const d1 = midnight(prevDate);
+                const d2 = midnight(currDate);
+                const days = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1);
+                const perDay = l.points / days;
+                for (let d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
+                    addActual((0, date_1.ymd)(d), key, perDay);
+                }
+                prevDate = currDate;
+            }
+        }
+        // ── 3. 组装连续日期区间 ──
+        const allDates = [
+            ...Object.keys(expectedMap),
+            ...Object.keys(actualMap),
+            (0, date_1.todayStr)(),
+        ].sort();
+        const minD = allDates[0];
+        const maxD = allDates[allDates.length - 1];
+        const today = (0, date_1.todayStr)();
+        const expected = [];
+        const actual = [];
+        if (minD && maxD) {
+            let cur = minD;
+            let guard = 0;
+            while (cur <= maxD && guard < 2000) {
+                expected.push({ date: cur, tasks: expectedMap[cur] || [] });
+                if (cur <= today)
+                    actual.push({ date: cur, tasks: actualMap[cur] || [] });
+                const nxt = (0, date_1.addDays)(cur, 1);
+                if (!nxt)
+                    break;
+                cur = nxt;
+                guard += 1;
+            }
+        }
+        // ── 4. 汇总 ──
+        const thisMonth = today.substring(0, 7);
+        const expAll = Object.values(expectedMap).flat();
+        const actAll = Object.values(actualMap).flat();
+        const sum = (arr) => arr.reduce((s, x) => s + (x.points || 0), 0);
+        const avg = (arr) => (arr.length ? Math.round(sum(arr) / arr.length) : 0);
+        return {
+            person: person
+                ? { id: person.id, name: person.name, role: person.role, color: person.color }
+                : null,
+            summary: {
+                task_count: tasks.length,
+                done_count: tasks.filter((t) => t.status === 'done').length,
+                // 2026-10-08 新增：待办计数（用户要求「待办也要在人员工作量里体现」）
+                todo_count: todoRows.length,
+                todo_pending: todoRows.filter((t) => t.status !== 'done').length,
+                todo_done: todoRows.filter((t) => t.status === 'done').length,
+                avg_daily_expected: avg(expAll),
+                total_expected_this_month: round2(Object.entries(expectedMap).filter(([d]) => d.startsWith(thisMonth)).flatMap(([, v]) => v).reduce((s, x) => s + x.points, 0)),
+                avg_daily_actual: avg(actAll),
+                total_actual_this_month: round2(Object.entries(actualMap).filter(([d]) => d.startsWith(thisMonth)).flatMap(([, v]) => v).reduce((s, x) => s + x.points, 0)),
+                total_actual: round2(person?.total_points || 0),
+            },
+            from: minD || '',
+            to: maxD || '',
+            today,
+            expected,
+            actual,
+            task_map: taskMap,
+        };
+    });
+    // ── 积分汇总（柱状图数据源）────────────────────────────────
+    app.get('/api/points/summary', async (req) => {
+        const { person_ids, from, to } = req.query;
+        const where = {};
+        if (person_ids) {
+            const ids = String(person_ids).split(',').filter(Boolean);
+            if (ids.length)
+                where.person_id = { in: ids };
+        }
+        if (from || to) {
+            where.created_at = {};
+            if (from)
+                where.created_at.gte = new Date(from + 'T00:00:00');
+            if (to)
+                where.created_at.lte = new Date(to + 'T23:59:59');
+        }
+        const rows = await prisma_1.default.pointsLedger.groupBy({
+            by: ['person_id'],
+            where,
+            _sum: { points: true },
+        });
+        const people = await prisma_1.default.person.findMany({ where: { deleted_at: null } });
+        const pMap = Object.fromEntries(people.map((p) => [p.id, p]));
+        const items = people.map((p) => {
+            const hit = rows.find((r) => r.person_id === p.id);
+            return {
+                person_id: p.id,
+                name: p.name,
+                role: p.role,
+                color: p.color,
+                total_points: Math.round((p.total_points || 0) * 100) / 100,
+                range_points: Math.round(((hit?._sum.points || 0)) * 100) / 100,
+            };
+        });
+        return { items };
+    });
+    // ── 积分流水 ──────────────────────────────────────────────
+    app.get('/api/points/ledger', async (req) => {
+        const { person_id, limit } = req.query;
+        const where = {};
+        if (person_id)
+            where.person_id = person_id;
+        const rows = await prisma_1.default.pointsLedger.findMany({
+            where,
+            orderBy: { created_at: 'desc' },
+            take: Math.min(Number(limit) || 200, 1000),
+        });
+        return { ledger: rows };
+    });
+    // ── 重算某人积分（纠错用，流水是唯一真相）────────────────────
+    app.post('/api/points/recalc/:person_id', async (req) => {
+        const { person_id } = req.params;
+        const total = await (0, history_1.recalcPersonPoints)(person_id);
+        return { ok: true, total_points: total };
+    });
+    // ── 手工加减分 ────────────────────────────────────────────
+    app.post('/api/points/manual', async (req, reply) => {
+        const schema = zod_1.z.object({
+            person_id: zod_1.z.string().min(1),
+            points: zod_1.z.number(),
+            reason: zod_1.z.string().max(200).optional(),
+        });
+        const parsed = schema.safeParse(req.body || {});
+        if (!parsed.success)
+            return reply.status(400).send({ error: '参数校验失败' });
+        const { addPoints } = await Promise.resolve().then(() => __importStar(require('../lib/history')));
+        await addPoints({
+            person_id: parsed.data.person_id,
+            points: parsed.data.points,
+            source_type: 'manual',
+            reason: parsed.data.reason ?? '手工调整',
+        });
+        const p = await prisma_1.default.person.findUnique({ where: { id: parsed.data.person_id } });
+        return p;
+    });
+}

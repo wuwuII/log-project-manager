@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>日志与项目管理</title>
+    <style>
+      html, body, #root { height: 100%; margin: 0; }
+      body {
+        font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+        background: #f3f3f3;
+        color: #333;
+        font-size: 13px;
+      }
+    </style>
+    <!--
+      ⚠️ 必须放在打包脚本之前（普通脚本，非 module）。
+      用户那台不联网的 Windows 上 Edge 从未更新，缺 ES2023 的
+      Array.prototype.toSorted 等方法，甘特图一初始化就崩。
+      这个文件在应用代码执行前补齐这些 API。
+    -->
+    <script src="/polyfills.js"></script>
+    <script type="module" crossorigin src="/assets/index-DahO5ruB.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CwaPcnvF.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
