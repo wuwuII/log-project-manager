@@ -1,36 +1,32 @@
-# ── 运行时数据：绝不入库（里面有真实数据）──
-data/
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
-*.bak
+# ============================================================
+#  本仓库的做法：把「能直接跑的东西」一起放进来
+#    → 别人 clone / 下载 ZIP 之后，双击「启动.bat」就能用
+#  所以 node/（便携 Node 运行时）、backend/node_modules/（依赖库）、
+#  dist/（编译产物）、data/app.db（演示库）都是【故意入库】的。
+# ============================================================
 
-# ── 依赖（node_modules 不入库；要「双击即用」请下载 Releases 里的离线包）──
-node_modules/
+# ── 只是「构建中间物」才排除 ──
 build/
-# 注：dist/ 现在入库了 —— 仓库里直接带编译产物，clone 下来不必自己编译
 
-# ── 便携 Node 运行时（体积大，不进仓库；需要离线包的人自己放）──
-node/
-
-# ── 日志 / 临时文件 ──
+# ── 运行时产生的垃圾数据（演示库本身要留，别删）──
+data/backups/
+data/*.bak
+data/*.bak.*
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 *.log
 out.txt
-shot.png
 _shots/
 _shots2/
+__pycache__/
+*.pyc
 
 # ── 编辑器 / 系统 ──
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-__pycache__/
-*.pyc
-
-# 备份/临时文件（别进仓库）
-*.bak.*
 *.orig
 *.tmp
 *~
