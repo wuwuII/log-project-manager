@@ -115,7 +115,46 @@ const PP_DEFAULT_COL_W: Record<string, number> = {
   actual_start: 96, actual_end: 96, progress: 180, assignee_id: 84,
   points: 56, earned_points: 62, status: 76, op: 92,
 };
-const PP_COLW_KEY = 'lpm_pp_colw';
+const PP_COLW_BASE = 'lpm_pp_colw';
+const PP_SPLIT_BASE = 'lpm_split_left_w';
+
+/**
+ * 🔴 2026-10-08 用户反馈：改了 A 计划的列宽/分栏宽，B 计划也跟着变 —— 要求「每个页面各记各的」。
+ *    所以存档键改成 `<base>::<工作表id>::<项目id>`：每个工程、每张工作表各一份。
+ *    兼容：新键读不到时**回退读旧的全局键**（之前调过的宽度不会丢），写入只写新键。
+ */
+const ppPageKey = (base: string, tableId?: string, projectId?: string) =>
+  `${base}::${tableId || 'na'}::${projectId || 'na'}`;
+
+function ppReadJson(key: string): any {
+  try {
+    return JSON.parse(localStorage.getItem(key) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+/** 按「工作表 + 项目」读列宽；没有就退回默认值 */
+function ppLoadColW(tableId?: string, projectId?: string): Record<string, number> {
+  const saved = ppReadJson(ppPageKey(PP_COLW_BASE, tableId, projectId)) ?? ppReadJson(PP_COLW_BASE);
+  const merged: Record<string, number> = { ...PP_DEFAULT_COL_W };
+  if (saved && typeof saved === 'object') {
+    Object.keys(PP_DEFAULT_COL_W).forEach((k) => {
+      const v = Number((saved as any)[k]);
+      if (Number.isFinite(v) && v >= 48) merged[k] = v;
+    });
+  }
+  return merged;
+}
+
+/** 按「工作表 + 项目」读分栏宽（左侧任务列表宽度） */
+function ppLoadLeftW(tableId?: string, projectId?: string): number {
+  const raw =
+    localStorage.getItem(ppPageKey(PP_SPLIT_BASE, tableId, projectId)) ??
+    localStorage.getItem(PP_SPLIT_BASE);
+  const v = Number(raw);
+  return Number.isFinite(v) && v >= 240 ? v : 560;
+}
 
 /**
  * 可拖动列宽的表头单元格（自写，不引第三方库）
@@ -172,10 +211,7 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
    *   原来 leftW 硬初始化 560、纯内存状态 → 切表/刷新即丢。
    *   现在：初值从 localStorage 读，变化即写回，拖过的宽度能记住。
    */
-  const [leftW, setLeftW] = useState<number>(() => {
-    const v = Number(localStorage.getItem('lpm_split_left_w'));
-    return v >= 240 ? v : 560;
-  });
+  const [leftW, setLeftW] = useState<number>(560);
   /**
    * 列宽（鼠标拖表头右边缘调整）
    * 🔴 每列都必须有**显式** width：以前「任务名称」列不设宽度 → AntD 让它吃剩余空间，
@@ -185,32 +221,28 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
    *    原来 colW 是纯内存 state（初值写死）→ 刷新 / 切表即丢；
    *    现在初值从 localStorage 读（与默认值逐列合并，旧数据缺列也不会崩），变化即写回。
    */
-  const [colW, setColW] = useState<Record<string, number>>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(PP_COLW_KEY) || '{}');
-      if (saved && typeof saved === 'object') {
-        const merged: Record<string, number> = { ...PP_DEFAULT_COL_W };
-        Object.keys(PP_DEFAULT_COL_W).forEach((k) => {
-          const v = Number((saved as any)[k]);
-          if (Number.isFinite(v) && v >= 48) merged[k] = v;
-        });
-        return merged;
-      }
-    } catch {
-      /* 存档坏了就用默认值 */
-    }
-    return { ...PP_DEFAULT_COL_W };
-  });
+  const [colW, setColW] = useState<Record<string, number>>(() => ({ ...PP_DEFAULT_COL_W }));
+
+  /** 每页独立：工作表 / 项目一变，就把这一页各自的列宽与分栏宽读回来 */
   useEffect(() => {
-    try {
-      localStorage.setItem(PP_COLW_KEY, JSON.stringify(colW));
-    } catch {
-      /* 写不了就算了，不影响功能 */
-    }
-  }, [colW]);
-  const onResizeCol = useCallback((key: string, w: number) => {
-    setColW((p) => ({ ...p, [key]: Math.max(48, Math.round(w)) }));
-  }, []);
+    setColW(ppLoadColW(table.id, projectId));
+    setLeftW(ppLoadLeftW(table.id, projectId));
+  }, [table.id, projectId]);
+
+  const onResizeCol = useCallback(
+    (key: string, w: number) => {
+      setColW((p) => {
+        const next = { ...p, [key]: Math.max(48, Math.round(w)) };
+        try {
+          localStorage.setItem(ppPageKey(PP_COLW_BASE, table.id, projectId), JSON.stringify(next));
+        } catch {
+          /* 写不了就算了，不影响功能 */
+        }
+        return next;
+      });
+    },
+    [table.id, projectId],
+  );
   const totalColW = Object.values(colW).reduce((a, b) => a + b, 0);
   /** 拖动分栏结束后 +1 → 甘特图按新宽度重挂载（否则容器压窄后图表区不收缩、被裁成空白） */
   const [ganttTick, setGanttTick] = useState(0);
@@ -343,10 +375,18 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
     };
   }, []);
 
-  /* 🔴 2026-10-05 修复：分栏宽度持久化（配合上面的 localStorage 初值） */
+  /* 🔴 2026-10-05 分栏宽度持久化；🔴 2026-10-08 改成「每个工程 + 每张工作表」各记各的 */
   useEffect(() => {
-    try { localStorage.setItem('lpm_split_left_w', String(Math.round(leftW))); } catch { /* 忽略隐私模式限制 */ }
-  }, [leftW]);
+    try {
+      const page = ppPageKey(PP_SPLIT_BASE, table.id, projectId);
+      const w = String(Math.round(leftW));
+      // 还没拖过、也没有这一页的存档 → 不要把默认值写进去（免得盖掉别的页）
+      if (w === '560' && !localStorage.getItem(page)) return;
+      localStorage.setItem(page, w);
+    } catch {
+      /* 忽略隐私模式限制 */
+    }
+  }, [leftW, table.id, projectId]);
 
   // ── 甘特图进度样式注入（照任务公会做法）────────────────────
   //   浅灰底 + 每任务固定艳色按进度填充 + 条尾百分比数字

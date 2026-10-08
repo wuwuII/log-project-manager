@@ -466,12 +466,30 @@ body,
   position: static !important;
   pointer-events: none;
 }
+/* 🔴 2026-10-08 修「点空白不关弹窗」（用户反馈：加提醒的弹窗点空白不消失，只能刷新）
+   根因：下面这条规则本意是给弹窗根节点补定位（老 Edge 84 不认 inset 简写），
+   但它把 .ant-modal-wrap / .ant-modal-mask 也一起设成了 pointer-events:none
+   ⇒ 遮罩收不到点击，「点遮罩关弹窗」直接失效。实测取证：弹窗打开时
+   wrap/mask 的 pointer-events 都是 none，空白坐标上最顶层的元素是页面里的
+   .lpm-day-textarea（点击穿透到下面去了）。
+   处置：显示中的 wrap/mask 恢复 pointer-events:auto；关掉之后 antd 会给 wrap
+   加 display:none（已实测确认），所以不会重现「残留空壳挡住整页点击」的老问题。 */
 .ant-modal-wrap,
 .ant-modal-mask,
 .lpm-drawer-mask,
-.ant-drawer,
-.ant-drawer-mask,
-.ant-image-preview-wrap,
+.ant-image-preview-wrap {
+  position: fixed !important;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: auto;
+  z-index: 1000;
+}
+/* × 原来颜色太浅、几乎看不见（用户反馈「没有关闭按钮」） */
+.ant-modal-close {
+  color: #595959 !important;
+}
+.ant-modal-close:hover {
+  color: #000000 !important;
+}
 
 /* 🔴 2026-10-06 老 Edge 84：antd5 的抽屉用 inset / 逻辑属性定位 ⇒ 抽屉跑到屏幕左边、
    宽度也被压扁。这里显式把面板钉在右边，并保持它自己的宽度（不参与上面的全屏组）。 */

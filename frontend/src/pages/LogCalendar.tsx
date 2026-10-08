@@ -267,6 +267,7 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
       else await api.post('/reminders', body);
       await loadReminders();
       resetReminderForm();
+      setReminderOpen(false); // 2026-10-08 用户反馈：原来点完只能刷新页面才能关掉
       message.success(wasEdit ? '已保存' : '已添加提醒');
     } catch (e: any) {
       message.error(e?.friendlyMessage || '保存失败');
@@ -791,7 +792,22 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
         title={`提醒 · ${table.name}`}
         open={reminderOpen}
         onCancel={() => setReminderOpen(false)}
-        footer={null}
+        afterClose={resetReminderForm}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button
+              onClick={() => {
+                resetReminderForm();
+                setReminderOpen(false);
+              }}
+            >
+              取消
+            </Button>
+            <Button type="primary" onClick={saveReminder}>
+              {editingId ? '保存修改' : '添加提醒'}
+            </Button>
+          </div>
+        }
         width={660}
       >
         <div className="lpm-rem-tip">
@@ -937,9 +953,6 @@ const LogCalendar: React.FC<Props> = ({ table, people, reloadPeople, tables, onC
               取消编辑
             </Button>
           )}
-          <Button size="small" type="primary" onClick={saveReminder}>
-            {editingId ? '保存修改' : '添加提醒'}
-          </Button>
         </div>
       </Modal>
 

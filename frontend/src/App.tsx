@@ -45,7 +45,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
  * ⚠️ 每次出构建记得同步改这里。
  */
 const BUILD_TAG =
-  '构建 V36 · 10-08 人员页：记住所选人员 + 记住所看时间段（可任意前后翻，含无安排的时段）+ 分组显示计划表名；计划表列宽也会记住';
+  '构建 V37 · 10-08 修复：弹窗点空白可关 / 提醒弹窗补「取消」并在保存后自动关闭 / × 更明显；列宽与分栏宽改成每张工作表各自独立（不再互相串）';
 
 const App: React.FC = () => {
   React.useEffect(() => {

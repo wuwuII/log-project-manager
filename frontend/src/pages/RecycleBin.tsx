@@ -179,7 +179,18 @@ const RecycleBin: React.FC<Props> = ({ open, onClose, onChanged }) => {
   ];
 
   return (
-    <Modal open={open} title="回收站" width={760} footer={null} onCancel={onClose} destroyOnClose>
+    <Modal
+      open={open}
+      title="回收站"
+      width={760}
+      onCancel={onClose}
+      destroyOnClose
+      footer={
+        <Button type="primary" onClick={onClose}>
+          关闭
+        </Button>
+      }
+    >
       <div className="lpm-recycle-tabs">
         {TABS.map((t) => (
           <button
