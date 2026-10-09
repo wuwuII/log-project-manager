@@ -45,7 +45,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
  * ⚠️ 每次出构建记得同步改这里。
  */
 const BUILD_TAG =
-  '构建 V38 · 10-09 修复：「已经得到的」改成按任务净得分摊在计划区间 —— 进度拖回 0 即整条归零，不再在最近摊一串负数';
+  '构建 V41 · 10-09 计划表：任务名称列已冻结（左右拖时钉在左边不动，像 Excel）';
 
 const App: React.FC = () => {
   React.useEffect(() => {

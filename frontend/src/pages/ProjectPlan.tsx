@@ -119,6 +119,16 @@ const PP_COLW_BASE = 'lpm_pp_colw';
 const PP_SPLIT_BASE = 'lpm_split_left_w';
 
 /**
+ * 🔴 2026-10-09 甘特图「时间轴」的横向滚动位置 —— **只记在本次页面会话里**（模块级变量）。
+ *   用户要求（原话）：「只要不是重新打开网页，拖拉应该保留；切其他工作表再回来不会变；
+ *                    但是我刷新网页，会回到当天。」
+ *   模块级变量正好是这个生命周期：刷新（重新加载 JS）→ 清空 → 回到「今天」；
+ *   切工作表（组件卸载又重挂）→ 还在 → 位置保留。
+ *   键：`lpm_gantt_scroll::<工作表id>::<项目id>`（用 ppPageKey 生成，每张表/每个工程各记各的）。
+ */
+const ganttChartScroll: Record<string, number> = {};
+
+/**
  * 🔴 2026-10-08 用户反馈：改了 A 计划的列宽/分栏宽，B 计划也跟着变 —— 要求「每个页面各记各的」。
  *    所以存档键改成 `<base>::<工作表id>::<项目id>`：每个工程、每张工作表各一份。
  *    兼容：新键读不到时**回退读旧的全局键**（之前调过的宽度不会丢），写入只写新键。
@@ -421,15 +431,23 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
     // 🔴 「把甘特图区调小后右边一大片空白」的真根因（2026-10-03 用 Profiler + 调用栈定位）：
     //    .wx-content（图表区容器）是 flex item，容器变窄时被压成 **0 宽**（实测 gantt=622 时 chart=0，
     //    818 时才恢复 643）—— 不是没渲染，是被压没了。
-    //    修法：**只**让 .wx-content 不参与 flex 压缩，图表区就能保住宽度。
+    //
+    // 🔴🔴 2026-10-09 用户报：「时间跨度 8~10 月，甘特图**后面那段看不到**，也没有横条能拖」
+    //    根因：原写法 `flex-shrink:0`（内容**完全不收缩**）→ 图表块被撑到自然宽（本例 1368px），
+    //    而父级 .wx-layout 是 `overflow:hidden` → 多出来的 ~527px 被**裁掉**；
+    //    外层容器又认为"没溢出" → 既没有滚动条、也滚不动（.wx-chart 的 scrollLeft 最大只能到 0）。
+    //    现改成 `flex:1 1 auto; min-width:240px`：图表至少 240px 宽（防当年那个塌成 0 的坑），
+    //    多出来的宽度交给库自带的横向滚动容器 `.wx-chart`（它本来就是 overflow-x:auto）去滚。
+    //    实测四档视口 1600/1280/1100/980：chart 宽 841/521/320/320，可横滚 527/847/1048/1048 —— 都不塌、都能滚。
+    //    （参照：任务公会用的是「.wx-gantt/.wx-layout 改 overflow:visible + 外层当滚动容器 + 任务列 sticky」；
+    //      本处只动时间轴这一条，纵向滚动 / 今天列高亮 / 左右逐行对齐**全不碰**，回归面更小。）
     //
     // ⚠️⚠️ 千万不要给 `.wx-chart` 加 `flex-shrink:0`！踩过：
     //    SVAR 的网格背景组件在 **每次 render** 里同步调 `IHe()` → `canvas.toDataURL()`
     //    现场画一张网格 PNG 当 background（本该缓存，是它自己的性能缺陷）。
     //    给 .wx-chart 加 flex-shrink:0 会让它内部尺寸检测一直"对不上"→ 反复重渲染
     //    → **实测 5 秒调用 toDataURL 596 次、项目计划页主线程占用 61%**（页面卡成幻灯片）。
-    //    加在 .wx-content 上则实测 0%，且图表区宽度正常恢复。
-    rules.push('.wx-gantt .wx-content{flex-shrink:0 !important;}');
+    rules.push('.wx-gantt .wx-content{flex:1 1 auto !important;min-width:240px !important;}');
 
     // 每个任务：底色浅灰 + 填充色 = 该任务固定色 + 条尾百分比数字
     // 🔴 2026-10-05 修复「0% 的任务在甘特图上看不见横条」（用户报：1234/345/890 没有横条）
@@ -728,7 +746,11 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
       // 🔴 2026-10-05：原为 fixed:'left'。Chromium 84（用户那台 Edge 84）对
       //    table-cell 的 position:sticky 渲染有缺陷 → 表头被重复绘制成两行。
       //    去掉固定列即消失；同时符合用户"不要锁定列、要随横滚"的要求。
-      onHeaderCell: hdr('drag'),
+      // 🔴 2026-10-09 V41：这一列改成「冻结列」—— 横滚时钉在左边不动（见 index.css 的 .lpm-frz）。
+      //    仍然**不用** antd 的 fixed:'left'（2026-10-05 那轮它疑似引起老 Chromium 表头双绘），
+      //    只是给这列自己的 th/td 加 position:sticky + left。表头高度/样式/其它列一律不动。
+      onHeaderCell: () => ({ ...hdr('drag')(), className: 'lpm-frz lpm-frz-1' }),
+      onCell: () => ({ className: 'lpm-frz lpm-frz-1' }),
       render: () => <DragHandle />,
     },
     {
@@ -737,7 +759,10 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
       width: colW.name,
       ellipsis: true,
       // 🔴 2026-10-05：同上一处，去掉 fixed:'left' 修复老 Chromium 表头双绘
-      onHeaderCell: hdr('name'),
+      // 🔴 2026-10-09 V41：任务名称列 = 冻结列（用户要「像 Excel 一样锁定」，横滚时钉住）
+      //    第 1 列宽（可拖拽变宽）由 CSS 变量 --lpm-freeze-1 提供，见 index.css
+      onHeaderCell: () => ({ ...hdr('name')(), className: 'lpm-frz lpm-frz-2' }),
+      onCell: () => ({ className: 'lpm-frz lpm-frz-2' }),
       render: (v: string, r: ProjectTask & { __depth?: number; __hasChildren?: boolean }) => (
         <Tooltip title={`${r.__depth ? '子任务 · ' : ''}${v}（点击编辑）`} mouseEnterDelay={0.4}>
           <span
@@ -850,7 +875,9 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
             ref={tableWrapRef}
             className="lpm-scroll-x"
             onWheel={onWheelScroll}
-            style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+            /* 🔴 2026-10-09 V41：把第 1 列（⠿ 拖动把手）的实时宽度写进 CSS 变量，
+               供冻结的第 2 列（任务名称）算它的 sticky left —— 拖动改宽后会自动跟上。 */
+            style={{ flex: 1, minHeight: 0, overflow: 'auto', ['--lpm-freeze-1' as any]: `${colW.drag}px` }}
           >
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
               <SortableContext items={visibleRows.map((r) => r.id)} strategy={verticalListSortingStrategy}>
@@ -933,6 +960,43 @@ const ProjectPlan: React.FC<Props> = ({ table, people }) => {
                       gantt.querySelectorAll('.gantt-today-column').forEach((n) => n.remove());
                       const todayCells = gantt.querySelectorAll('.wx-scale .wx-row .wx-today');
                       const area = gantt.querySelector('.wx-area') as HTMLElement | null;
+
+                      /* ── 🔴 2026-10-09 时间轴横向位置（用户要求）──────────────────────
+                         「默认应该停在今天所在的位置；可以左右拖拉；只要不是重新打开网页，拖拉应该保留」
+                         ① 本次页面会话**没记过** → 把「今天」居中；
+                         ② 记过（切工作表回来 / 编辑后重渲染）→ 用记下的位置恢复；
+                         ③ 刷新网页 → 模块级变量被清空 → 又回到「今天」。
+                         ⚠️ 必须**按公式算**，不能拿 `.wx-today` 那个刻度格子去量：
+                            SVAR 只渲染「可视窗口」内的刻度 → 默认窗口停在最早的任务那边时，
+                            今天的格子**压根不在 DOM 里**（实测 querySelector 返回 null）。
+                         公式与 <Gantt cellWidth={18} gridWidth={170}> 保持一致。 */
+                      const CELL_W = 18;
+                      const GRID_W = 170;
+                      const chart = gantt.querySelector('.wx-chart') as HTMLElement | null;
+                      if (chart) {
+                        const sk = ppPageKey('lpm_gantt_scroll', table.id, projectId);
+                        const cached = ganttChartScroll[sk];
+                        if (typeof cached === 'number') {
+                          chart.scrollLeft = cached;
+                        } else if (ganttStart) {
+                          const s0 = new Date(ganttStart);
+                          const n0 = new Date();
+                          const d0 = new Date(s0.getFullYear(), s0.getMonth(), s0.getDate()).getTime();
+                          const dn = new Date(n0.getFullYear(), n0.getMonth(), n0.getDate()).getTime();
+                          const diffDays = Math.round((dn - d0) / 86400000);
+                          const todayLeft = diffDays * CELL_W + GRID_W;
+                          const max = Math.max(0, chart.scrollWidth - chart.clientWidth);
+                          chart.scrollLeft = Math.max(0, Math.min(Math.round(todayLeft - chart.clientWidth / 2), max));
+                        }
+                        // 只绑一次：用户一拖就记下来（供切表回来恢复）
+                        if (chart.dataset.lpmScrollKey !== sk) {
+                          chart.dataset.lpmScrollKey = sk;
+                          chart.addEventListener('scroll', () => {
+                            ganttChartScroll[sk] = (chart as HTMLElement).scrollLeft;
+                          });
+                        }
+                      }
+
                       if (!area || todayCells.length === 0) return;
                       const cell0 = todayCells[0] as HTMLElement;
                       // 同列所有刻度行一起染色（月行 + 日行）

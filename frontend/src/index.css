@@ -77,6 +77,41 @@ body,
   vertical-align: middle !important;
 }
 
+/* 🔴 2026-10-09 V41 「冻结列」—— 计划表左区横滚时，⠿ 与 任务名称 两列钉在左边（像 Excel 冻结窗格）
+   用户原话：「计划那个表里面，左右拖拉的时候任务名称会看不见，能像EXECL把任务名称这一列锁定么」
+   ⚠️ 不用 antd 的 fixed:'left' —— 2026-10-05 那轮它在用户机 Edge 84 上疑似引起「表头被画两遍」，
+      当时就把 fixed 去掉了；这里改为**只给这两列单独加 position:sticky + left**（表头本来已经 sticky，
+      只是没有 left），改动面最小、可一键回退。
+   ⚠️ 必须**冻结最左边连续的两列**（⚠️ 34px 的拖动把手 + 任务名称）：
+      只冻第 2 列的话，第 1 列会滑到它背后、被遮住，拖拽把手就摸不到了。
+   ⚠️ 第 2 列的 left 值 = 第 1 列的宽度（用户可拖拽改宽）→ 用 CSS 变量 `--lpm-freeze-1`
+      （由 ProjectPlan.tsx 按 colW.drag 实时写入），不能写死 34px。
+   ⚠️ 冻结格必须是**不透明底色**，否则下面的列会从它底下透出来。
+   实测（本机 Chromium）：横滚容器是 `.ant-table-content`（可滚 614px），冻结后两列 left 不动。 */
+.lpm-draggable .ant-table-thead > tr > th.lpm-frz,
+.lpm-draggable .ant-table-tbody > tr > td.lpm-frz {
+  position: sticky !important;
+  z-index: 4;
+  background: #fff !important;
+}
+.lpm-draggable .ant-table-thead > tr > th.lpm-frz {
+  z-index: 7 !important;                    /* 表头原本是 6，冻结的再高一层 */
+  background: var(--lpm-head) !important;
+}
+.lpm-draggable .ant-table-thead > tr > th.lpm-frz-1,
+.lpm-draggable .ant-table-tbody > tr > td.lpm-frz-1 { left: 0; }
+.lpm-draggable .ant-table-thead > tr > th.lpm-frz-2,
+.lpm-draggable .ant-table-tbody > tr > td.lpm-frz-2 { left: var(--lpm-freeze-1, 34px); }
+/* 冻结区右缘一道浅阴影，跟滚动区划开 */
+.lpm-draggable .ant-table-thead > tr > th.lpm-frz-2,
+.lpm-draggable .ant-table-tbody > tr > td.lpm-frz-2 {
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.07);
+}
+/* 鼠标悬停整行时，冻结格底色要跟着变，否则悬停的那一行是断的 */
+.lpm-draggable .ant-table-tbody > tr:hover > td.lpm-frz { background: #fafafa !important; }
+/* 新增/编辑后的高亮行（lpm-row-flash）也要覆盖冻结格 */
+.lpm-draggable .ant-table-tbody > tr.lpm-row-flash > td.lpm-frz { background: #fffbe6 !important; }
+
 /* ── 顶部工具栏 ── */
 .lpm-toolbar {
   display: flex;
@@ -222,6 +257,21 @@ body,
   font-family: inherit; background: transparent; color: #222;
 }
 .lpm-day-textarea:focus { background: #fffdf3; }
+
+/* ── 2026-10-09 日志格子滚动条改「窄条」（用户报：格子文字多了，旁边那根上下拉的条太粗、挡字）──
+   原因：.lpm-day-textarea 从来没设过 ::-webkit-scrollbar → 走浏览器默认（Windows/Edge 约 15~17px，
+   带灰底和上下箭头），既吃掉书写宽度、又紧贴文字显得挡字。
+   做法：只给这根格子里的条单独设 6px、无轨道底色、平时淡淡的、鼠标进格子才变深（好抓）。
+   ⚠️ 只影响日志格子；.lpm-content / .lpm-todo-body / .lpm-cal-scroll / .lpm-scroll-x 仍是原样 12px，不动。 */
+.lpm-day-textarea::-webkit-scrollbar { width: 6px; height: 6px; }
+.lpm-day-textarea::-webkit-scrollbar-track { background: transparent; }
+.lpm-day-textarea::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);   /* 平时很淡，不跟文字抢视线 */
+  border-radius: 3px;
+}
+.lpm-day-textarea:hover::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.30); }  /* 鼠标进格子→变深，方便抓 */
+.lpm-day-textarea::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.45); }
+.lpm-day-textarea::-webkit-scrollbar-corner { background: transparent; }
 
 /* 每周底部的拖拽条：按住上下拖 = 调这一周高度；双击 = 恢复默认。
    grid-column: 1 / -1 让它横跨 7 天列、不改变原有 7 列布局。 */
@@ -402,6 +452,14 @@ body,
 .lpm-scroll-x::-webkit-scrollbar-thumb:hover {
   background: #a0a0a0;
 }
+/* 甘特图「时间轴」的横向滚动条 —— `.wx-chart` 是 SVAR 自带的横向滚动容器。
+   2026-10-09 起它真的会溢出了（详见 ProjectPlan.tsx 里 .wx-content 那条注释），
+   所以给它配上和别处一致的 12px 样式，别用浏览器默认的粗条。 */
+.lpm-split-right .wx-chart::-webkit-scrollbar { width: 12px; height: 12px; }
+.lpm-split-right .wx-chart::-webkit-scrollbar-track { background: #f2f2f2; border-radius: 6px; }
+.lpm-split-right .wx-chart::-webkit-scrollbar-thumb { background: #bfbfbf; border-radius: 6px; border: 2px solid #f2f2f2; }
+.lpm-split-right .wx-chart::-webkit-scrollbar-thumb:hover { background: #a0a0a0; }
+
 /* Firefox 备用 */
 .lpm-scroll-x,
 .lpm-cal-scroll,

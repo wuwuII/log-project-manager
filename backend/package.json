@@ -1,6 +1,6 @@
 {
   "name": "lpm-backend",
-  "version": "1.2.3",
+  "version": "1.2.6",
   "private": true,
   "scripts": {
     "dev": "tsx src/app.ts",
