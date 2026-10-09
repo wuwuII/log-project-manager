@@ -253,15 +253,45 @@ async function default_1(app) {
             bySource[key].push(l);
         }
         const midnight = (s) => new Date(s + 'T00:00:00');
+        /**
+         * 「已经得到的(actual)」摊法 —— 2026-10-09 用户拍板（方案 A）
+         * ------------------------------------------------------------------
+         * 旧做法：每条流水按「上一条流水日 → 本条流水日」区间摊开。
+         *   副作用（用户实测报的）：把「已得分」的任务从 100% 拖回 0%，扣分那条流水记在**今天**，
+         *   于是扣分只在「上一条流水日 → 今天」这一截摊成一串负数，
+         *   而**当初加分的那几天照旧显示得分** → 用户看到「扣分只有今天的，之前的日子没扣」。
+         * 新做法（任务类）：
+         *   不看流水发生的时点，取该任务流水的**净额**（= 当前该得的分），
+         *   均摊在它的计划区间 [plan_start, min(plan_end, 今天)] 上。
+         *   ⇒ 进度归零 → 净额 0 → 该任务所有天一起归零；加减分互相抵消，不再留负数尾巴。
+         * 待办 / 手工 / 其他：保持旧做法（按流水日期区间摊）—— 它们是「某一天的事」。
+         * 净额取流水求和（流水是唯一真相），保证图上合计 == 该人总分。
+         */
         for (const key of Object.keys(bySource)) {
             const rows = bySource[key].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-            // 起始日：任务优先用它的计划开始日；但若计划开始日**晚于**第一条流水日
-            // （数据不一致：还没开工就记了分），必须取较早者，否则均摊区间落到未来、
-            // 这部分分会凭空丢失（真踩过：接口开发 16 分没进 actual）。
-            let prevDate = (0, date_1.ymd)(new Date(rows[0].created_at));
             const tk = tasks.find((x) => 'T:' + x.id === key);
-            if (tk?.plan_start && tk.plan_start < prevDate)
-                prevDate = tk.plan_start;
+            if (tk) {
+                // ── 任务：净额摊在计划区间（截止今天）──
+                const net = round2(rows.reduce((s, l) => s + (l.points || 0), 0));
+                if (net === 0)
+                    continue; // 已归零 → 该任务不出现
+                const ws = tk.plan_start || (0, date_1.ymd)(new Date(rows[0].created_at));
+                let we = tk.plan_end && tk.plan_end < (0, date_1.todayStr)() ? tk.plan_end : (0, date_1.todayStr)();
+                if (ws > we)
+                    we = ws; // 计划还没开始也要落一天，别丢分
+                const t1 = midnight(ws);
+                const t2 = midnight(we);
+                const ndays = Math.max(1, Math.round((t2.getTime() - t1.getTime()) / 86400000) + 1);
+                const perDay = net / ndays;
+                for (let d = new Date(t1); d <= t2; d.setDate(d.getDate() + 1)) {
+                    addActual((0, date_1.ymd)(d), key, perDay);
+                }
+                continue;
+            }
+            // ── 待办 / 手工 / 其他：沿用旧做法（按流水日期区间均摊）──
+            // 起始日：若首条流水日晚于其计划开始日（数据不一致：还没开工就记了分），取较早者，
+            // 否则均摊区间落到未来、这部分分会凭空丢失（真踩过：接口开发 16 分没进 actual）。
+            let prevDate = (0, date_1.ymd)(new Date(rows[0].created_at));
             for (const l of rows) {
                 const currDate = (0, date_1.ymd)(new Date(l.created_at));
                 const d1 = midnight(prevDate);

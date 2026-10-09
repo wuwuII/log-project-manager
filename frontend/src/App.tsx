@@ -45,7 +45,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
  * ⚠️ 每次出构建记得同步改这里。
  */
 const BUILD_TAG =
-  '构建 V37 · 10-08 修复：弹窗点空白可关 / 提醒弹窗补「取消」并在保存后自动关闭 / × 更明显；列宽与分栏宽改成每张工作表各自独立（不再互相串）';
+  '构建 V38 · 10-09 修复：「已经得到的」改成按任务净得分摊在计划区间 —— 进度拖回 0 即整条归零，不再在最近摊一串负数';
 
 const App: React.FC = () => {
   React.useEffect(() => {
